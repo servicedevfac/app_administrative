@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GESTION+ | Logiciel de Gestion des Stocks, Demandes & Documents</title>
+  
+  <!-- Polices Google : Plus Jakarta Sans & Inter (Rendu naturel et typographie d'entreprise) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Bootstrap 5.3 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  
+  <!-- Feuille de styles personnalisée GESTION+ -->
+  <link rel="stylesheet" href="{{ asset('css/style.css') }}?v={{ filemtime(public_path('css/style.css')) }}">
+</head>
+<body>
+
+  <!-- ==========================================================================
+       CONTAINER PRINCIPAL APPLICATIF (SIDEBAR + TOPBAR + VUES METIER)
+       ========================================================================== -->
+  <div class="app-container" id="appMainContainer">
+
+    <!-- ========================================================================
+         SIDEBAR NAVIGATION
+         ======================================================================== -->
+    <aside class="app-sidebar">
+      <div class="sidebar-header">
+        <a href="#dashboard" class="brand-logo" data-view-target="dashboard">
+          <div class="brand-icon">
+            <i class="bi bi-box-seam"></i>
+          </div>
+          <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+        </a>
+      </div>
+
+      <nav class="sidebar-menu">
+        <div class="sidebar-heading">Pilotage & Opérations</div>
+        
+        <a class="nav-item-link active" data-view-target="dashboard" href="#dashboard">
+          <i class="bi bi-grid-1x2"></i>
+          <span>Tableau de bord</span>
+        </a>
+
+        <a class="nav-item-link" data-view-target="stock-articles" href="#stock-articles">
+          <i class="bi bi-box"></i>
+          <span>Stocks</span>
+        </a>
+
+        <a class="nav-item-link" data-view-target="requests-list" href="#requests-list">
+          <i class="bi bi-file-earmark-text"></i>
+          <span>Demandes</span>
+          <span class="nav-badge bg-primary text-white" id="sidebarRequestsBadge">0</span>
+        </a>
+
+        <a class="nav-item-link admin-only-feature" data-view-target="documents" href="#documents">
+          <i class="bi bi-folder2-open"></i>
+          <span>Documents</span>
+        </a>
+
+        <div class="sidebar-heading admin-only-feature">Administration</div>
+
+        <a class="nav-item-link admin-only-feature" data-view-target="users" href="#users">
+          <i class="bi bi-people"></i>
+          <span>Utilisateurs</span>
+        </a>
+
+        <a class="nav-item-link admin-only-feature" data-view-target="settings" href="#settings">
+          <i class="bi bi-gear"></i>
+          <span>Paramètres</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="d-flex align-items-center gap-2 p-2 rounded" style="background: rgba(255,255,255,0.05);">
+          <i class="bi bi-shield-check text-success fs-5"></i>
+          <div style="font-size: 0.72rem; line-height: 1.2;">
+            <div class="text-white fw-bold">Système Sécurisé</div>
+            <div class="text-muted">v2.5 • ISO 27001</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ========================================================================
+         MAIN WRAPPER (TOPBAR + CONTENU)
+         ======================================================================== -->
+    <div class="main-wrapper">
+
+      <!-- TOPBAR NAVIGATION -->
+      <header class="app-topbar">
+        <div class="topbar-search">
+          <i class="bi bi-search"></i>
+          <input type="text" id="topbarGlobalSearch" placeholder="Rechercher une demande, un article, un document...">
+        </div>
+
+        <div class="topbar-right">
+          <!-- Rôle Actif Badge -->
+          <div class="d-none d-md-flex align-items-center gap-2 py-1 px-3 rounded-pill bg-light border" style="font-size: 0.82rem; font-weight: 600; color: var(--gp-slate-700);">
+            <i class="bi bi-shield-check text-primary fs-6"></i>
+            <span id="topbarActiveRoleText">Profil : Administrateur</span>
+          </div>
+
+          <!-- Bouton Synchronisation / Rafraîchissement en direct -->
+          <button class="btn-icon-topbar" id="topbarBtnRefresh" title="Actualiser et synchroniser les données avec MySQL" style="border: none; background: transparent; cursor: pointer;">
+            <i class="bi bi-arrow-clockwise fs-5 text-secondary" id="iconRefreshSpin"></i>
+          </button>
+
+          <!-- Notification Bell -->
+          <div class="btn-icon-topbar" title="Notifications" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-bell"></i>
+            <span class="badge-dot-alert" id="topbarNotifDot" style="display: none;"></span>
+          </div>
+          <!-- Menu dropdown notifications -->
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="width: 320px;">
+            <li class="px-2 py-1 fw-bold text-dark border-bottom mb-2 d-flex justify-content-between align-items-center">
+              <span>Notifications</span>
+              <span class="badge bg-secondary-subtle text-secondary" id="notifCountBadge">0</span>
+            </li>
+            <li class="p-3 text-center text-muted small">
+              <i class="bi bi-bell-slash me-1"></i> Aucune nouvelle notification
+            </li>
+          </ul>
+
+          <!-- User Profile Chip with Dropdown -->
+          <div class="dropdown">
+            <div class="user-profile-badge" data-bs-toggle="dropdown" aria-expanded="false" style="cursor:pointer;">
+              <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center fw-bold" id="topbarUserAvatar" style="width:34px; height:34px; font-size:0.85rem;">
+                AD
+              </div>
+              <div class="user-info-text d-none d-sm-flex">
+                <span class="user-name" id="topbarUserName">Administrateur</span>
+                <span class="user-role-label" id="topbarUserRole">Direction</span>
+              </div>
+              <i class="bi bi-chevron-down text-muted ms-1" style="font-size: 0.75rem;"></i>
+            </div>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2">
+              <li class="px-3 py-2 border-bottom">
+                <div class="fw-bold text-dark">Profil utilisateur</div>
+                <small class="text-muted">Département RH & Logistique</small>
+              </li>
+              <li><a class="dropdown-item py-2" href="#profile" data-view-target="profile"><i class="bi bi-person-circle me-2"></i> Mon profil</a></li>
+              <li><a class="dropdown-item py-2" href="#requests-list" data-view-target="requests-list"><i class="bi bi-file-text me-2"></i> Mes demandes</a></li>
+              <li><a class="dropdown-item py-2" href="#settings" data-view-target="settings"><i class="bi bi-gear me-2"></i> Paramètres système</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item py-2 text-danger" href="#logout" data-view-target="logout"><i class="bi bi-box-arrow-right me-2"></i> Déconnexion</a></li>
+            </ul>
+          </div>
+        </div>
+      </header>
+
+      <!-- ======================================================================
+           ZONE DE CONTENU DYNAMIQUE (VIEWS)
+           ====================================================================== -->
+      <main class="content-area">
+
+        <!-- ====================================================================
+             VUE 1 : TABLEAU DE BORD (DASHBOARD)
+             ==================================================================== -->
+        <section id="view-dashboard" class="view-section active-view">
+          
+          <!-- ==================================================================
+               1. DASHBOARD COLLABORATEUR (AMINATA KONÉ)
+               ================================================================== -->
+          <div id="collaboratorDashboardView">
+            <div class="page-header-row">
+              <div>
+                <h1 class="page-title">Bonjour <span id="collabGreetingName">Collaborateur</span> 👋</h1>
+                <p class="page-subtitle" id="collabGreetingSub">Espace Collaborateur</p>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn-gp-secondary" data-view-target="requests-list">
+                  <i class="bi bi-list-check"></i> Mes demandes
+                </button>
+                <button class="btn-gp-primary" data-view-target="request-new">
+                  <i class="bi bi-plus-lg"></i> Nouvelle demande
+                </button>
+              </div>
+            </div>
+
+            <!-- 4 Cartes KPIs Collaborateur -->
+            <div class="row g-3 mb-4">
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Mes demandes en cours</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-warning" id="kpiCollabInProgress">0</span>
+                      <span class="trend-badge trend-positive" id="kpiCollabInProgressBadge" style="display: none;">0 en attente</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-amber">
+                    <i class="bi bi-clock-history"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Demandes approuvées</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-success" id="kpiCollabApproved">0</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-green">
+                    <i class="bi bi-check-circle"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Articles reçus (ce mois)</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-primary" id="kpiCollabReceivedMonth">0</span>
+                      <span class="badge bg-light text-muted border">Fournitures</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-blue">
+                    <i class="bi bi-box-seam"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Dernière demande</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number fs-5 text-dark fw-bold" id="kpiCollabLatestRef">-</span>
+                    </div>
+                    <span class="badge-status badge-pending mt-1" id="kpiCollabLatestStatus" style="display: none;"><span class="badge-status-dot"></span> En attente</span>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-orange">
+                    <i class="bi bi-file-earmark-text"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row g-4">
+              <!-- Colonne Gauche Collaborateur : Mes demandes et suivi -->
+              <div class="col-12 col-lg-7">
+                <!-- Card Mes Demandes Récentes -->
+                <div class="gp-card mb-4">
+                  <div class="gp-card-header">
+                    <h2 class="gp-card-title">Mes demandes récentes</h2>
+                    <a href="#requests-list" class="btn btn-sm btn-link text-decoration-none fw-semibold" data-view-target="requests-list">Voir tout l'historique</a>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="gp-table">
+                      <thead>
+                        <tr>
+                          <th>N° Réf</th>
+                          <th>Date</th>
+                          <th>Articles</th>
+                          <th>Statut</th>
+                          <th class="text-end">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="collaboratorRecentRequestsTableBody"><tr><td colspan="5" class="text-center py-4 text-muted"><i class="bi bi-inbox me-2"></i>Aucune demande récente émise.</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Card Suivi en direct de ma demande en cours -->
+                <div class="gp-card mb-0" id="activeRequestTrackerCard" style="display: none;">
+                  <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h3 class="gp-card-title">Avancement de ma demande active (<span id="trackerRequestRef">-</span>)</h3>
+                    <span class="badge bg-primary-subtle text-primary border" id="trackerRequestBadge">En cours</span>
+                  </div>
+                  <div class="p-3 bg-light rounded border mb-3">
+                    <div class="request-progress-tracker mb-2">
+                      <div class="request-progress-bar done" id="trackBar1" title="Demande soumise"></div>
+                      <div class="request-progress-bar" id="trackBar2" title="Validation logistique"></div>
+                      <div class="request-progress-bar" id="trackBar3" title="Préparation magasin"></div>
+                      <div class="request-progress-bar" id="trackBar4" title="Mise à disposition"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Colonne Droite Collaborateur : Fournitures fréquentes & Documents -->
+              <div class="col-12 col-lg-5">
+                <!-- Fournitures fréquentes -->
+                <div class="gp-card mb-4">
+                  <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h3 class="gp-card-title">Catalogue rapide</h3>
+                    <a href="#stock-articles" class="btn btn-sm btn-link text-decoration-none fw-semibold" data-view-target="stock-articles">Catalogue complet</a>
+                  </div>
+
+                  <div class="d-flex flex-column gap-2" id="collabQuickCatalogList">
+                    <div class="p-3 text-center text-muted small bg-light rounded">
+                      <i class="bi bi-box me-1"></i> Aucun article disponible dans le catalogue pour le moment.
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Guide & Bonnes Pratiques Collaborateur -->
+                <div class="gp-card mb-0">
+                  <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h3 class="gp-card-title">Guide des dotations</h3>
+                    <span class="badge bg-primary-subtle text-primary border">Info service</span>
+                  </div>
+                  <div class="d-flex flex-column gap-3" style="font-size: 0.83rem;">
+                    <div class="d-flex align-items-start gap-2 p-2 rounded bg-light border">
+                      <i class="bi bi-1-circle-fill text-primary fs-6 mt-1"></i>
+                      <div>
+                        <strong class="text-dark d-block">1. Soumission de votre demande</strong>
+                        <span class="text-muted">Sélectionnez vos articles dans le catalogue et indiquez votre motif professionnel.</span>
+                      </div>
+                    </div>
+                    <div class="d-flex align-items-start gap-2 p-2 rounded bg-light border">
+                      <i class="bi bi-2-circle-fill text-warning fs-6 mt-1"></i>
+                      <div>
+                        <strong class="text-dark d-block">2. Validation par le Magasinier</strong>
+                        <span class="text-muted">L'administration vérifie la disponibilité et prépare vos équipements.</span>
+                      </div>
+                    </div>
+                    <div class="d-flex align-items-start gap-2 p-2 rounded bg-light border">
+                      <i class="bi bi-3-circle-fill text-success fs-6 mt-1"></i>
+                      <div>
+                        <strong class="text-dark d-block">3. Retrait & Restitution</strong>
+                        <span class="text-muted">Récupérez le matériel au magasin central et veillez à son bon usage.</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================================================================
+               2. DASHBOARD ADMINISTRATEUR (JEAN OUÉDRAOGO)
+               ================================================================== -->
+          <div id="adminDashboardView" style="display: none;">
+            <div class="page-header-row">
+              <div>
+                <h1 class="page-title">Supervision Générale & Magasin</h1>
+                <p class="page-subtitle">Vue globale des stocks, contrôle des réquisitions et alertes d'approvisionnement</p>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn-gp-secondary" data-bs-toggle="modal" data-bs-target="#modalNewMovement">
+                  <i class="bi bi-sliders"></i> Ajuster le stock
+                </button>
+                <button class="btn-gp-primary" data-bs-toggle="modal" data-bs-target="#modalNewArticle">
+                  <i class="bi bi-plus-lg"></i> Nouvel article
+                </button>
+              </div>
+            </div>
+
+            <!-- 4 Cartes d'indicateurs Superviseur (KPI) -->
+            <div class="row g-3 mb-4">
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Articles en stock</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number" id="kpiTotalArticles">0</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-blue">
+                    <i class="bi bi-box-seam"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Stock critique / faible</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-warning" id="kpiLowStock">0</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-amber">
+                    <i class="bi bi-exclamation-triangle"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Demandes à valider</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-primary" id="kpiPendingRequests">0</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-orange">
+                    <i class="bi bi-clock-history"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-sm-6 col-xl-3">
+                <div class="stat-card">
+                  <div>
+                    <div class="stat-title">Demandes approuvées</div>
+                    <div class="stat-value-group">
+                      <span class="stat-number text-success" id="kpiApprovedRequests">0</span>
+                    </div>
+                  </div>
+                  <div class="stat-icon-wrapper stat-icon-green">
+                    <i class="bi bi-check-circle"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2 Cartes Graphiques : Évolution & Répartition -->
+            <div class="row g-4 mb-4">
+              <div class="col-12 col-lg-7">
+                <div class="gp-card h-100">
+                  <div class="gp-card-header">
+                    <div>
+                      <h2 class="gp-card-title">Évolution globale des demandes</h2>
+                      <small class="text-muted">Répartition mensuelle des décisions de validation</small>
+                    </div>
+                    <button class="btn-gp-icon" title="Options"><i class="bi bi-three-dots"></i></button>
+                  </div>
+                  <div style="height: 290px; position: relative;">
+                    <canvas id="requestsEvolutionChart"></canvas>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-lg-5">
+                <div class="gp-card h-100">
+                  <div class="gp-card-header">
+                    <div>
+                      <h2 class="gp-card-title">Répartition du stock global</h2>
+                      <small class="text-muted">Ventilation par famille de fournitures</small>
+                    </div>
+                    <button class="btn-gp-icon" title="Options"><i class="bi bi-three-dots"></i></button>
+                  </div>
+                  <div class="row align-items-center g-3">
+                    <div class="col-12 col-sm-5 d-flex justify-content-center">
+                      <div style="height: 195px; width: 100%; max-width: 195px; position: relative;">
+                        <canvas id="articlesDistributionChart"></canvas>
+                      </div>
+                    </div>
+                    <div class="col-12 col-sm-7">
+                      <ul class="list-unstyled mb-0 d-flex flex-column gap-2" id="categoriesLegendList" style="font-size: 0.82rem;">
+                        <li class="p-3 text-center text-muted small bg-light rounded">
+                          <i class="bi bi-pie-chart me-1"></i> Aucun article enregistré en stock.
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section inférieure Superviseur : Demandes à valider & Alertes stocks -->
+            <div class="row g-4">
+              <div class="col-12 col-lg-8">
+                <div class="gp-card mb-0">
+                  <div class="gp-card-header">
+                    <h2 class="gp-card-title">Demandes urgentes à valider</h2>
+                    <a href="#requests-list" class="btn btn-sm btn-link text-decoration-none fw-semibold" data-view-target="requests-list">Voir tout</a>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="gp-table">
+                      <thead>
+                        <tr>
+                          <th>N° Réf</th>
+                          <th>Demandeur</th>
+                          <th>Date</th>
+                          <th>Articles</th>
+                          <th>Statut</th>
+                          <th class="text-end">Validation</th>
+                        </tr>
+                      </thead>
+                      <tbody id="supervisorPendingRequestsTableBody"><tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-clipboard-check me-2"></i>Aucune demande en attente de validation.</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12 col-lg-4">
+                <div class="gp-card mb-0">
+                  <div class="gp-card-header">
+                    <h2 class="gp-card-title">Stocks critiques à commander</h2>
+                    <span class="badge bg-warning-subtle text-warning" id="criticalStockBadge">0 alerte</span>
+                  </div>
+                  <div class="d-flex flex-column gap-3" id="supervisorCriticalStockList">
+                    <div class="p-3 text-center text-muted small bg-light rounded">
+                      <i class="bi bi-check-circle text-success me-1"></i> Aucun stock critique pour le moment.
+                    </div>
+                  </div>
+                  <button class="btn-gp-secondary w-100 justify-content-center mt-2" data-view-target="stock-articles">
+                      <i class="bi bi-box-seam me-1"></i> Gérer l'inventaire complet
+                    </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ====================================================================
+             VUE 2 : ARTICLES EN STOCK (GESTION DE L'INVENTAIRE)
+             ==================================================================== -->
+        <section id="view-stock-articles" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Articles en stock</h1>
+              <p class="page-subtitle">Consultez les articles disponibles et effectuez vos demandes de réquisition</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-secondary admin-only-feature" data-view-target="stock-movements">
+                <i class="bi bi-clock-history"></i> Mouvements de stock
+              </button>
+              <button class="btn-gp-primary admin-only-feature" data-bs-toggle="modal" data-bs-target="#modalNewArticle">
+                <i class="bi bi-plus-lg"></i> Nouvel article
+              </button>
+              <button class="btn-gp-primary collaborator-only-feature" data-view-target="request-new">
+                <i class="bi bi-plus-lg"></i> Nouvelle demande
+              </button>
+            </div>
+          </div>
+
+          <div class="gp-table-container">
+            <div class="gp-table-toolbar">
+              <div class="toolbar-filters">
+                <select id="filterStockCategory" class="form-select-sm-custom">
+                  <option value="">Toutes les catégories</option>
+                  <option value="Papeterie">Papeterie</option>
+                  <option value="Informatique">Informatique</option>
+                  <option value="Fournitures">Fournitures</option>
+                  <option value="Gadgets">Gadgets</option>
+                </select>
+
+                <select id="filterStockStatus" class="form-select-sm-custom">
+                  <option value="">Tous les statuts</option>
+                  <option value="dispo">En stock</option>
+                  <option value="faible">Stock faible</option>
+                </select>
+              </div>
+
+              <div class="table-search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" id="searchStockInput" class="form-input-sm-custom" placeholder="Rechercher un article...">
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Article</th>
+                    <th>Catégorie</th>
+                    <th>Unité</th>
+                    <th>Quantité</th>
+                    <th>Seuil</th>
+                    <th>Statut</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="articlesStockTableBody"><tr><td colspan="8" class="text-center py-4 text-muted"><i class="bi bi-box me-2"></i>Aucun article en stock. Cliquez sur "+ Nouvel article" pour enregistrer un matériel.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 3 : NOUVELLE DEMANDE (ASSISTANT STEPPER)
+             ==================================================================== -->
+        <section id="view-request-new" class="view-section">
+          <div class="breadcrumb-nav">
+            <a href="#requests-list" data-view-target="requests-list">Demandes</a>
+            <span class="separator">/</span>
+            <span class="current">Nouvelle demande</span>
+          </div>
+
+          <div class="page-header-row mb-3">
+            <div>
+              <h1 class="page-title">Nouvelle demande</h1>
+              <p class="page-subtitle">Sélectionnez les articles nécessaires à votre mission ou service</p>
+            </div>
+          </div>
+
+          <!-- Stepper Indicator -->
+          <div class="stepper-header">
+            <div class="step-item active" id="stepHeader1">
+              <span class="step-number">1</span>
+              <span>Articles</span>
+            </div>
+            <div class="step-separator"></div>
+            <div class="step-item" id="stepHeader2">
+              <span class="step-number">2</span>
+              <span>Informations</span>
+            </div>
+            <div class="step-separator"></div>
+            <div class="step-item" id="stepHeader3">
+              <span class="step-number">3</span>
+              <span>Validation</span>
+            </div>
+          </div>
+
+          <!-- Étape 1 : Sélection des articles -->
+          <div id="stepContent1" class="gp-card">
+            <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+              <h2 class="gp-card-title">Sélection des articles <span class="badge bg-primary rounded-pill ms-2" id="selectedArticlesCountBadge" style="display:none;">0</span></h2>
+              <div class="table-search-box" style="min-width: 280px;">
+                <i class="bi bi-search"></i>
+                <input type="text" id="searchNewReqArticle" class="form-input-sm-custom" placeholder="Rechercher un article...">
+              </div>
+            </div>
+
+            <div class="table-responsive mb-4">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th style="width: 40px;"></th>
+                    <th>Article</th>
+                    <th>Catégorie</th>
+                    <th class="text-center">Stock dispo</th>
+                    <th class="text-center" style="width: 150px;">Quantité souhaitée</th>
+                  </tr>
+                </thead>
+                <tbody id="selectableArticlesTableBody"><tr><td colspan="5" class="text-center py-4 text-muted"><i class="bi bi-inbox me-2"></i>Aucun matériel disponible dans le catalogue pour le moment.</td></tr></tbody>
+              </table>
+            </div>
+
+            <div class="d-flex justify-content-end">
+              <button type="button" id="btnStep1Next" class="btn-gp-primary">
+                Suivant <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Étape 2 : Informations complémentaires -->
+          <div id="stepContent2" class="gp-card" style="display: none;">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <div>
+                <h2 class="gp-card-title">Informations sur la demande interne</h2>
+                <small class="text-muted">Précisez la nature de l'emprunt ou de la dotation pour le gestionnaire</small>
+              </div>
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1">Usage interne entreprise</span>
+            </div>
+
+            <div class="alert alert-light border d-flex align-items-center gap-2 mb-4 py-2" style="font-size: 0.83rem;">
+              <i class="bi bi-shield-check text-primary fs-5"></i>
+              <span>Le matériel emprunté demeure la propriété exclusive de l'entreprise. Dès validation par le gestionnaire, un <strong>Document officiel de Décharge</strong> est généré pour signature et archivage.</span>
+            </div>
+            
+            <div class="row g-3 mb-4">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Type d'opération interne <span class="text-danger">*</span></label>
+                <select id="selectRequestType" class="form-select">
+                  <option value="Emprunt temporaire" selected>Emprunt temporaire (matériel avec restitution)</option>
+                  <option value="Dotation permanente">Dotation permanente / Consommables (fournitures de bureau)</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Service demandeur <span class="text-danger">*</span></label>
+                <select id="selectRequestService" class="form-select">
+                  <option value="Ressources Humaines" selected>Ressources Humaines (RH)</option>
+                  <option value="Logistique">Logistique & Approvisionnements</option>
+                  <option value="Informatique & SI">Informatique & SI</option>
+                  <option value="Communication">Communication & Marketing</option>
+                  <option value="Direction Générale">Direction Générale</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Motif de la demande interne <span class="text-danger">*</span></label>
+                <input type="text" id="inputRequestMotif" class="form-control" placeholder="Ex: Mission terrain, formation RH, animation atelier...">
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Date de restitution prévue <span class="text-muted">(si emprunt)</span></label>
+                <input type="date" id="inputRequestDateNeeded" class="form-control">
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Niveau d'urgence</label>
+                <select class="form-select">
+                  <option value="Normale">Normale (délai standard 24h)</option>
+                  <option value="Urgente">Urgente (intervention immédiate)</option>
+                  <option value="Planifiée">Planifiée (pour la semaine prochaine)</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold">Collaborateur responsable</label>
+                <input type="text" class="form-control bg-light" id="reqDemandeurName" placeholder="Nom du demandeur" readonly>
+              </div>
+
+              <div class="col-12">
+                <label class="form-label fw-semibold">Commentaires / Justification pour le gestionnaire</label>
+                <textarea id="inputRequestNotes" class="form-control" rows="3" placeholder="Précisez le contexte d'utilisation du matériel pour faciliter l'approbation du gestionnaire..."></textarea>
+              </div>
+            </div>
+
+            <div class="d-flex justify-content-between">
+              <button type="button" id="btnStep2Prev" class="btn-gp-secondary">
+                <i class="bi bi-arrow-left"></i> Précédent
+              </button>
+              <button type="button" id="btnStep2Next" class="btn-gp-primary">
+                Suivant <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Étape 3 : Récapitulatif & Soumission -->
+          <div id="stepContent3" class="gp-card" style="display: none;">
+            <h2 class="gp-card-title mb-4">Récapitulatif de la demande</h2>
+
+            <div class="row g-3 mb-4">
+              <div class="col-12 col-md-4">
+                <div class="p-3 bg-light rounded">
+                  <small class="text-muted d-block">Motif :</small>
+                  <strong id="step3MotifRecap" class="text-dark">-</strong>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="p-3 bg-light rounded">
+                  <small class="text-muted d-block">Service :</small>
+                  <strong id="step3ServiceRecap" class="text-dark">-</strong>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="p-3 bg-light rounded">
+                  <small class="text-muted d-block">Date souhaitée :</small>
+                  <strong id="step3DateRecap" class="text-dark">-</strong>
+                </div>
+              </div>
+            </div>
+
+            <h3 class="fs-6 fw-bold text-dark mb-2">Articles sélectionnés pour la demande :</h3>
+            <div class="table-responsive mb-4">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>Article</th>
+                    <th>Catégorie</th>
+                    <th class="text-center">Quantité demandée</th>
+                    <th class="text-end">Disponibilité</th>
+                  </tr>
+                </thead>
+                <tbody id="step3RecapTableBody">
+                  <!-- Alimenté en JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <div class="alert alert-info d-flex align-items-center gap-2 mb-4" style="font-size: 0.85rem;">
+              <i class="bi bi-info-circle-fill fs-5"></i>
+              <span>En validant cette soumission, votre demande sera enregistrée sous un numéro de référence unique et transmise au responsable pour validation hiérarchique.</span>
+            </div>
+
+            <div class="d-flex justify-content-between">
+              <button type="button" id="btnStep3Prev" class="btn-gp-secondary">
+                <i class="bi bi-arrow-left"></i> Précédent
+              </button>
+              <button type="button" id="btnSubmitRequest" class="btn-gp-primary">
+                <i class="bi bi-send-check"></i> Soumettre la demande
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 4 : DÉTAILS DE LA DEMANDE (DEM-2025-00045)
+             ==================================================================== -->
+        <section id="view-request-detail" class="view-section">
+          <div class="breadcrumb-nav">
+            <a href="#requests-list" data-view-target="requests-list">Demandes</a>
+            <span class="separator">/</span>
+            <span class="current">Détails de la demande</span>
+          </div>
+
+          <div class="page-header-row">
+            <div>
+              <div class="d-flex align-items-center gap-3">
+                <h1 class="page-title" id="detailRequestRef">Détails de la demande</h1>
+                <span id="requestDetailStatusBadge" class="badge-status badge-pending"><span class="badge-status-dot"></span> En attente</span>
+              </div>
+              <p class="page-subtitle" id="detailRequestSubtitle">Consultez les informations et le circuit de validation de cette demande</p>
+            </div>
+
+            <!-- Actions Dropdown & Fast Actions -->
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-secondary js-open-selected-bon" type="button">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> Exporter PDF
+              </button>
+
+              <!-- Actions réservées EXCLUSIVEMENT au Gestionnaire / Administrateur -->
+              <div class="dropdown admin-only-feature">
+                <button class="btn-gp-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                  <i class="bi bi-shield-check me-1"></i> Traiter la demande
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2">
+                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionApprove"><i class="bi bi-check-circle me-2"></i> Approuver & Émettre le Bon</button></li>
+                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionReturn"><i class="bi bi-arrow-return-left me-2"></i> Marquer comme Restituée</button></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><button class="dropdown-item py-2 text-danger" id="btnActionReject"><i class="bi bi-x-circle me-2"></i> Rejeter la demande</button></li>
+                </ul>
+              </div>
+
+              <!-- Action réservée au Collaborateur (Annuler sa propre demande si en attente) -->
+              <button class="btn btn-outline-danger btn-sm collaborator-only-feature" id="btnCollaboratorCancel" style="display: none;">
+                <i class="bi bi-x-circle me-1"></i> Annuler ma demande
+              </button>
+            </div>
+          </div>
+
+          <!-- Bannière Espace Collaborateur -->
+          <div class="alert alert-light border border-info-subtle d-flex align-items-center gap-3 mb-3 collaborator-only-feature" style="border-radius: 10px;">
+            <i class="bi bi-info-circle-fill text-primary fs-4"></i>
+            <div>
+              <div class="fw-semibold text-dark">Espace Collaborateur — Suivi de votre demande</div>
+              <div class="small text-muted">Cette demande est actuellement en cours d'examen par le <strong>Gestionnaire de Stock</strong>. Vous recevrez le bon officiel dès sa validation.</div>
+            </div>
+          </div>
+
+          <!-- Bannière Espace Gestionnaire -->
+          <div class="alert alert-light border border-success-subtle d-flex align-items-center gap-3 mb-3 admin-only-feature" style="border-radius: 10px;">
+            <i class="bi bi-shield-check text-success fs-4"></i>
+            <div>
+              <div class="fw-semibold text-dark">Espace Gestionnaire / Magasinier — Traitement & Décision</div>
+              <div class="small text-muted">Vérifiez les quantités demandées ci-dessous, puis utilisez le bouton <strong>Traiter la demande</strong> pour approuver (avec décompte de stock et émission du Bon) ou rejeter.</div>
+            </div>
+          </div>
+
+          <!-- Onglets de détail -->
+          <div class="custom-tabs-nav">
+            <button class="tab-nav-btn active" data-detail-tab="info">Informations</button>
+            <button class="tab-nav-btn" data-detail-tab="articles" id="detailTabArticlesBtn">Articles (0)</button>
+            <button class="tab-nav-btn" data-detail-tab="history">Historique & Circuit</button>
+            <button class="tab-nav-btn" data-detail-tab="documents">Documents</button>
+          </div>
+
+          <!-- Contenu de l'onglet : Informations -->
+          <div id="tabPane-info" class="detail-tab-pane">
+            <div class="row g-4">
+              <!-- Colonne Gauche : Données de la demande -->
+              <div class="col-12 col-lg-7">
+                <div class="gp-card">
+                  <div class="mb-4">
+                    <label class="text-muted small fw-semibold text-uppercase">Motif de la demande</label>
+                    <p class="fs-6 text-dark fw-medium mb-0" id="detailRequestMotif">-</p>
+                  </div>
+
+                  <div class="mb-4">
+                    <label class="text-muted small fw-semibold text-uppercase">Informations complémentaires</label>
+                    <p class="text-secondary mb-0" id="detailRequestNotes">Aucune note particulière.</p>
+                  </div>
+
+                  <div class="row g-3 pt-3 border-top">
+                    <div class="col-6 col-sm-4">
+                      <label class="text-muted small">Service</label>
+                      <div class="fw-semibold text-dark" id="detailRequestService">-</div>
+                    </div>
+                    <div class="col-6 col-sm-4">
+                      <label class="text-muted small">Date de création</label>
+                      <div class="fw-semibold text-dark" id="detailRequestCreatedAt">-</div>
+                    </div>
+                    <div class="col-6 col-sm-4">
+                      <label class="text-muted small">Dernière mise à jour</label>
+                      <div class="fw-semibold text-dark" id="detailRequestUpdatedAt">-</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Aperçu rapide des articles demandés -->
+                <div class="gp-card">
+                  <h3 class="gp-card-title mb-3">Articles demandés</h3>
+                  <div class="table-responsive">
+                    <table class="gp-table">
+                      <thead>
+                        <tr>
+                          <th>Article</th>
+                          <th>Catégorie</th>
+                          <th class="text-center">Quantité</th>
+                          <th class="text-end">Statut article</th>
+                        </tr>
+                      </thead>
+                      <tbody id="detailPreviewArticlesBody">
+                        <tr><td colspan="4" class="text-center py-3 text-muted">Aucun article dans cette demande.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Colonne Droite : Circuit de Validation & Statut -->
+              <div class="col-12 col-lg-5">
+                <div class="gp-card">
+                  <h3 class="gp-card-title mb-4">Statut de la demande</h3>
+
+                  <div class="audit-timeline">
+                    <!-- Étape 1 : Soumise -->
+                    <div class="timeline-step done">
+                      <div class="timeline-marker"><i class="bi bi-check"></i></div>
+                      <div class="timeline-title">Demande soumise</div>
+                      <div class="timeline-time" id="detailTimelineStep1Time">-</div>
+                    </div>
+
+                    <!-- Étape 2 : En attente d'approbation -->
+                    <div class="timeline-step current" id="timelineStepCurrent">
+                      <div class="timeline-marker"><i class="bi bi-arrow-repeat"></i></div>
+                      <div class="timeline-title text-warning fw-bold">En attente d'approbation</div>
+                      <div class="timeline-time">Assignée au gestionnaire</div>
+                    </div>
+
+                    <!-- Étape 3 : Statut Final (Approuvée & Bon émis) -->
+                    <div class="timeline-step" id="timelineStepApproved">
+                      <div class="timeline-marker">3</div>
+                      <div class="timeline-title">Approuvée & Bon émis</div>
+                      <div class="timeline-time">En attente de signature du gestionnaire</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contenu de l'onglet : Articles (3) -->
+          <div id="tabPane-articles" class="detail-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Détail complet des articles demandés</h3>
+              <div class="table-responsive">
+                <table class="gp-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Article</th>
+                      <th>Catégorie</th>
+                      <th>Unité</th>
+                      <th class="text-center">Quantité demandée</th>
+                      <th class="text-center">Quantité validée</th>
+                      <th>Disponibilité</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detailFullArticlesBody">
+                    <tr><td colspan="7" class="text-center py-3 text-muted">Aucun article dans cette demande.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contenu de l'onglet : Historique -->
+          <div id="tabPane-history" class="detail-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Journal d'audit & Traçabilité</h3>
+              <ul class="list-group list-group-flush" style="font-size: 0.885rem;">
+                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                  <div>
+                    <span class="fw-semibold text-dark">Dépôt initial de la demande</span>
+                    <div class="text-muted small">Création du brouillon</div>
+                  </div>
+                  <span class="text-muted small">12/06/2025 à 10:24</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                  <div>
+                    <span class="fw-semibold text-dark">Soumission pour validation</span>
+                    <div class="text-muted small">Notification envoyée au responsable</div>
+                  </div>
+                  <span class="text-muted small">12/06/2025 à 11:32</span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                  <div>
+                    <span class="fw-semibold text-dark">Consultation par le service logistique</span>
+                    <div class="text-muted small">Vérification des niveaux de stock physiques</div>
+                  </div>
+                  <span class="text-muted small">13/06/2025 à 09:15</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Contenu de l'onglet : Documents -->
+          <div id="tabPane-documents" class="detail-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <div class="d-flex align-items-center justify-content-between mb-3">
+                <h3 class="gp-card-title">Documents attachés</h3>
+                <button class="btn-gp-secondary js-open-selected-bon" type="button">
+                  <i class="bi bi-file-earmark-pdf text-danger"></i> Télécharger le bon PDF
+                </button>
+              </div>
+              <div class="p-3 border rounded d-flex align-items-center justify-content-between bg-light">
+                <div class="d-flex align-items-center gap-3">
+                  <i class="bi bi-file-earmark-pdf file-badge-icon file-icon-pdf"></i>
+                  <div>
+                    <div class="fw-semibold text-dark" id="detailBonPdfName">Bon_de_Demande.pdf</div>
+                    <small class="text-muted">Document officiel de décharge</small>
+                  </div>
+                </div>
+                <button class="btn-gp-secondary btn-sm js-open-selected-bon" type="button">Aperçu</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 5 : NOUVEAU DOCUMENT ADMINISTRATIF (FORMULAIRE)
+             ==================================================================== -->
+        <section id="view-document-new" class="view-section">
+          <div class="breadcrumb-nav">
+            <a href="#documents" data-view-target="documents">Documents</a>
+            <span class="separator">/</span>
+            <span class="current">Nouveau document</span>
+          </div>
+
+          <div class="page-header-row mb-3">
+            <div>
+              <h1 class="page-title">Nouveau document</h1>
+              <p class="page-subtitle">Enregistrez et classez un document officiel dans l'archive centrale</p>
+            </div>
+          </div>
+
+          <div class="gp-card">
+            <form id="formFullPageNewDoc">
+              <div class="row g-3 mb-4">
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Titre du document <span class="text-danger">*</span></label>
+                  <input type="text" id="fpDocTitle" class="form-control" placeholder="Ex: Procédure d'achat" required>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Catégorie <span class="text-danger">*</span></label>
+                  <select id="fpDocCategory" class="form-select" required>
+                    <option value="">Sélectionner une catégorie</option>
+                    <option value="Procédures">Procédures</option>
+                    <option value="Notes de service">Notes de service</option>
+                    <option value="Règlements">Règlements</option>
+                    <option value="Formulaires">Formulaires</option>
+                    <option value="Plans">Plans</option>
+                    <option value="Documents internes">Documents internes</option>
+                  </select>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Type de document <span class="text-danger">*</span></label>
+                  <select id="fpDocType" class="form-select" required>
+                    <option value="">Sélectionner un type</option>
+                    <option value="PDF">PDF</option>
+                    <option value="Word">Word (.docx)</option>
+                    <option value="Excel">Excel (.xlsx)</option>
+                  </select>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Service émetteur <span class="text-danger">*</span></label>
+                  <select id="fpDocService" class="form-select" required>
+                    <option value="">Sélectionner un service</option>
+                    <option value="Direction">Direction</option>
+                    <option value="RH">Ressources Humaines</option>
+                    <option value="Logistique">Logistique</option>
+                    <option value="Informatique">Informatique</option>
+                  </select>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Date du document <span class="text-danger">*</span></label>
+                  <input type="date" class="form-control" required value="2025-06-12">
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Référence (optionnelle)</label>
+                  <input type="text" class="form-control" placeholder="Ex: REF-2025-001">
+                </div>
+
+                <!-- Zone de dépôt Glisser-Déposer -->
+                <div class="col-12">
+                  <label class="form-label fw-semibold">Fichier <span class="text-danger">*</span></label>
+                  <div class="dropzone-container" onclick="document.getElementById('fileUploadInput').click();">
+                    <input type="file" id="fileUploadInput" style="display:none;" onchange="showToast('Fichier attaché : ' + (this.files[0] ? this.files[0].name : ''), 'info')">
+                    <div class="dropzone-icon">
+                      <i class="bi bi-cloud-arrow-up"></i>
+                    </div>
+                    <div class="fw-semibold text-dark fs-6 mb-1">Glissez-déposez votre fichier ici</div>
+                    <div class="text-primary small mb-2">ou cliquez pour parcourir</div>
+                    <div class="text-muted" style="font-size: 0.78rem;">Formats acceptés : PDF, Word, Excel, JPG, PNG (max 10 Mo)</div>
+                  </div>
+                </div>
+
+                <div class="col-12">
+                  <label class="form-label fw-semibold">Description (optionnelle)</label>
+                  <textarea class="form-control" rows="3" placeholder="Ajoutez une description..."></textarea>
+                </div>
+              </div>
+
+              <div class="d-flex justify-content-end gap-2">
+                <button type="button" class="btn-gp-secondary" data-view-target="documents">Annuler</button>
+                <button type="submit" class="btn-gp-primary">Enregistrer</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 6 : DOCUMENTS ADMINISTRATIFS (LISTE & ARCHIVAGE)
+             ==================================================================== -->
+        <section id="view-documents" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Documents administratifs</h1>
+              <p class="page-subtitle">Consultez, recherchez et gérez vos documents</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-primary" data-view-target="document-new">
+                <i class="bi bi-plus-lg"></i> Nouveau document
+              </button>
+            </div>
+          </div>
+
+          <div class="gp-table-container">
+            <div class="gp-table-toolbar">
+              <div class="toolbar-filters">
+                <select id="filterDocCategory" class="form-select-sm-custom">
+                  <option value="">Toutes les catégories</option>
+                  <option value="Procédures">Procédures</option>
+                  <option value="Notes de service">Notes de service</option>
+                  <option value="Règlements">Règlements</option>
+                  <option value="Formulaires">Formulaires</option>
+                  <option value="Plans">Plans</option>
+                  <option value="Documents internes">Documents internes</option>
+                </select>
+
+                <select id="filterDocType" class="form-select-sm-custom">
+                  <option value="">Tous les types</option>
+                  <option value="PDF">PDF</option>
+                  <option value="Word">Word</option>
+                  <option value="Excel">Excel</option>
+                </select>
+
+                <select id="filterDocService" class="form-select-sm-custom">
+                  <option value="">Tous les services</option>
+                  <option value="Direction">Direction</option>
+                  <option value="RH">RH</option>
+                  <option value="Logistique">Logistique</option>
+                </select>
+              </div>
+
+              <div class="table-search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" id="searchDocsInput" class="form-input-sm-custom" placeholder="Rechercher un document...">
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>Titre</th>
+                    <th>Catégorie</th>
+                    <th>Type</th>
+                    <th>Service</th>
+                    <th>Date</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="documentsTableBody"><tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-folder2-open me-2"></i>Aucun document administratif archivé.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 7 : MOUVEMENTS DE STOCK
+             ==================================================================== -->
+        <section id="view-stock-movements" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Mouvements de stock</h1>
+              <p class="page-subtitle">Journal des entrées, sorties, demandes et corrections d'inventaire</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-secondary admin-only-feature" data-bs-toggle="modal" data-bs-target="#modalNewMovement">
+                <i class="bi bi-sliders"></i> Ajuster le stock
+              </button>
+              <button class="btn-gp-primary" onclick="showToast('Export Excel/PDF des mouvements en cours...', 'success')">
+                <i class="bi bi-download"></i> Exporter
+              </button>
+            </div>
+          </div>
+
+          <div class="gp-table-container">
+            <div class="gp-table-toolbar">
+              <div class="toolbar-filters">
+                <div class="input-group input-group-sm" style="width: 220px;">
+                  <span class="input-group-text bg-white"><i class="bi bi-calendar3"></i></span>
+                  <input type="text" class="form-control" value="01/05/2025 - 30/06/2025">
+                </div>
+
+                <select id="filterMovementType" class="form-select-sm-custom">
+                  <option value="">Tous les types</option>
+                  <option value="Sortie">Sortie</option>
+                  <option value="Entrée">Entrée</option>
+                </select>
+              </div>
+
+              <div class="table-search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" id="searchMovementInput" class="form-input-sm-custom" placeholder="Rechercher par article, motif...">
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Article</th>
+                    <th>Type</th>
+                    <th>Quantité</th>
+                    <th>Origine</th>
+                    <th>Utilisateur</th>
+                    <th>Motif</th>
+                  </tr>
+                </thead>
+                <tbody id="stockMovementsTableBody"><tr><td colspan="7" class="text-center py-4 text-muted"><i class="bi bi-clock-history me-2"></i>Aucun mouvement de stock enregistré.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 8 : GESTION DES UTILISATEURS
+             ==================================================================== -->
+        <section id="view-users" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Utilisateurs</h1>
+              <p class="page-subtitle">Gérez les comptes et les profils utilisateurs</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-primary" data-bs-toggle="modal" data-bs-target="#modalNewUser">
+                <i class="bi bi-plus-lg"></i> Nouvel utilisateur
+              </button>
+            </div>
+          </div>
+
+          <div class="gp-table-container">
+            <div class="gp-table-toolbar">
+              <div class="toolbar-filters">
+                <select id="filterUserRole" class="form-select-sm-custom">
+                  <option value="">Tous les profils</option>
+                  <option value="Administrateur">Administrateur</option>
+                  <option value="Responsable">Responsable</option>
+                  <option value="Collaborateur">Collaborateur</option>
+                </select>
+              </div>
+
+              <div class="table-search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" id="searchUsersInput" class="form-input-sm-custom" placeholder="Rechercher un utilisateur...">
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>Nom et prénom</th>
+                    <th>Email</th>
+                    <th>Profil</th>
+                    <th>Service</th>
+                    <th>Statut</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="usersTableBody"><tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-people me-2"></i>Aucun utilisateur enregistré. Cliquez sur "+ Nouvel utilisateur" pour créer un compte.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 9 : LISTE COMPLÈTE DES DEMANDES INTERNES
+             ==================================================================== -->
+        <section id="view-requests-list" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Gestion des demandes internes</h1>
+              <p class="page-subtitle">Suivi du cycle de vie et validation des demandes de fournitures</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-primary" data-view-target="request-new">
+                <i class="bi bi-plus-lg"></i> Nouvelle demande
+              </button>
+            </div>
+          </div>
+
+          <div class="gp-table-container">
+            <div class="table-responsive">
+              <table class="gp-table">
+                <thead>
+                  <tr>
+                    <th>N° Référence</th>
+                    <th>Demandeur</th>
+                    <th>Service</th>
+                    <th>Date soumission</th>
+                    <th>Articles</th>
+                    <th>Statut</th>
+                    <th class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="allRequestsTableBody"><tr><td colspan="8" class="text-center py-4 text-muted"><i class="bi bi-file-earmark-text me-2"></i>Aucune demande d'emprunt enregistrée pour le moment.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 10 : PARAMÈTRES DU SYSTÈME (SETTINGS)
+             ==================================================================== -->
+        <section id="view-settings" class="view-section">
+          <div class="page-header-row">
+            <div>
+              <h1 class="page-title">Paramètres du système</h1>
+              <p class="page-subtitle">Configurez les règles d'approvisionnement, alertes et sécurité de la plateforme</p>
+            </div>
+            <div>
+              <button type="button" class="btn-gp-primary" id="btnSaveSettings">
+                <i class="bi bi-floppy"></i> Enregistrer les modifications
+              </button>
+            </div>
+          </div>
+
+          <!-- Onglets de Paramètres -->
+          <div class="settings-nav-pills">
+            <button class="settings-pill-btn active" data-settings-tab="general">
+              <i class="bi bi-sliders"></i> Général & Entreprise
+            </button>
+            <button class="settings-pill-btn" data-settings-tab="stocks">
+              <i class="bi bi-box-seam"></i> Stocks & Alertes
+            </button>
+            <button class="settings-pill-btn" data-settings-tab="workflow">
+              <i class="bi bi-diagram-3"></i> Circuit de Validation
+            </button>
+            <button class="settings-pill-btn" data-settings-tab="security">
+              <i class="bi bi-shield-check"></i> Sécurité & Sauvegardes
+            </button>
+          </div>
+
+          <!-- Contenu Onglet 1 : Général -->
+          <div id="settingsPane-general" class="settings-tab-pane">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Identité de l'organisation</h3>
+              <div class="row g-3 mb-4">
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Raison sociale / Nom de l'organisation</label>
+                  <input type="text" class="form-control" value="ENTREPRISE CI - SIÈGE SOCIAL">
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label fw-semibold">Sigle officiel</label>
+                  <input type="text" class="form-control" value="ENT-CI">
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label fw-semibold">Devise par défaut</label>
+                  <select class="form-select">
+                    <option value="XOF" selected>FCFA (XOF)</option>
+                    <option value="EUR">Euros (€)</option>
+                    <option value="USD">Dollars ($)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Format de numérotation des demandes</label>
+                  <input type="text" class="form-control font-monospace" value="DEM-{YEAR}-{00000}">
+                  <small class="text-muted">Exemple généré : DEM-2025-00045</small>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Fuseau horaire</label>
+                  <select class="form-select">
+                    <option value="Africa/Abidjan" selected>Abidjan (GMT+0)</option>
+                    <option value="Africa/Dakar">Dakar (GMT+0)</option>
+                    <option value="Europe/Paris">Paris (GMT+1)</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label fw-semibold">Adresse du siège (mentionnée sur les bons PDF)</label>
+                  <input type="text" class="form-control" value="Plateau, Immeuble Horizon, Abidjan - Côte d'Ivoire">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contenu Onglet 2 : Stocks & Alertes -->
+          <div id="settingsPane-stocks" class="settings-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Seuils et règles d'inventaire</h3>
+              <div class="row g-3 mb-4">
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Seuil d'alerte par défaut (nouvel article)</label>
+                  <input type="number" class="form-control" value="5" min="1">
+                  <small class="text-muted">Une alerte sera émise dès que le stock descend à cette valeur.</small>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Fréquence de l'inventaire physique</label>
+                  <select class="form-select">
+                    <option value="monthly" selected>Mensuel (Chaque fin de mois)</option>
+                    <option value="quarterly">Trimestriel</option>
+                    <option value="yearly">Annuel</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="switchAlertEmail" checked>
+                    <label class="form-check-label fw-semibold" for="switchAlertEmail">
+                      Notification automatique par e-mail au responsable logistique en cas de stock critique
+                    </label>
+                  </div>
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="switchBlockZeroStock" checked>
+                    <label class="form-check-label fw-semibold" for="switchBlockZeroStock">
+                      Empêcher la validation des demandes dont les articles sont en rupture totale
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contenu Onglet 3 : Workflow -->
+          <div id="settingsPane-workflow" class="settings-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Circuits d'approbation des demandes</h3>
+              <div class="row g-3 mb-4">
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Niveaux de validation standard</label>
+                  <select class="form-select">
+                    <option value="1">1 niveau (Responsable Logistique)</option>
+                    <option value="2" selected>2 niveaux (Chef de service + Logistique)</option>
+                    <option value="3">3 niveaux (Chef de service + Logistique + Direction)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Délai d'alerte pour traitement d'une demande</label>
+                  <select class="form-select">
+                    <option value="24">24 heures</option>
+                    <option value="48" selected>48 heures ouvrées</option>
+                    <option value="72">72 heures ouvrées</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="switchNotifyRequester" checked>
+                    <label class="form-check-label fw-semibold" for="switchNotifyRequester">
+                      Avertir le collaborateur par notification à chaque étape (Acceptation, Rejet, Disponibilité au magasin)
+                    </label>
+                  </div>
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="switchMandatoryReason" checked>
+                    <label class="form-check-label fw-semibold" for="switchMandatoryReason">
+                      Rendre obligatoire le motif textuel détaillé lors du rejet d'une demande
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contenu Onglet 4 : Sécurité & Sauvegardes -->
+          <div id="settingsPane-security" class="settings-tab-pane" style="display: none;">
+            <div class="gp-card">
+              <h3 class="gp-card-title mb-3">Sécurité des accès & Politiques système</h3>
+              <div class="row g-3 mb-4">
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Délai d'inactivité avant déconnexion automatique</label>
+                  <select class="form-select">
+                    <option value="15">15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60" selected>60 minutes (Recommandé)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-semibold">Politique d'expiration des mots de passe</label>
+                  <select class="form-select">
+                    <option value="90" selected>Tous les 90 jours</option>
+                    <option value="180">Tous les 180 jours</option>
+                    <option value="never">Jamais</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <div class="p-3 bg-light rounded border d-flex align-items-center justify-content-between">
+                    <div>
+                      <div class="fw-bold text-dark"><i class="bi bi-database me-2 text-primary"></i> Sauvegardes automatiques MySQL</div>
+                      <small class="text-muted">Dernière sauvegarde automatique réussie : Aujourd'hui à 03:00 (Taille : 24.8 Mo)</small>
+                    </div>
+                    <button type="button" class="btn-gp-secondary btn-sm" onclick="showToast('Sauvegarde manuelle initiée avec succès !', 'success')">
+                      Sauvegarder maintenant
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====================================================================
+             VUE 11 : PROFIL UTILISATEUR
+             ==================================================================== -->
+        <section id="view-profile" class="view-section">
+          <div class="breadcrumb-nav">
+            <a href="#dashboard" data-view-target="dashboard">Accueil</a>
+            <span class="separator">/</span>
+            <span class="current">Mon Profil</span>
+          </div>
+
+          <div class="page-header-row mb-3">
+            <div>
+              <h1 class="page-title">Profil collaborateur</h1>
+              <p class="page-subtitle">Gérez vos informations personnelles et vos préférences de notification</p>
+            </div>
+          </div>
+
+          <div class="row g-4">
+            <!-- Colonne Carte Récapitulative -->
+            <div class="col-12 col-lg-4">
+              <div class="gp-card text-center">
+                <img src="assets/avatars/aminata.svg" alt="Avatar" class="profile-avatar-large mb-3 mx-auto" id="profileCardAvatar">
+                <h3 class="fs-5 fw-bold text-dark mb-1" id="profileCardName">Mon Profil</h3>
+                <span class="badge bg-primary-subtle text-primary border mb-3" id="profileCardRole">Collaborateur</span>
+                <div class="text-muted small mb-4" id="profileCardService">Service Entreprise</div>
+
+                <div class="text-start border-top pt-3" style="font-size: 0.85rem;">
+                  <div class="d-flex justify-content-between py-1">
+                    <span class="text-muted">Matricule :</span>
+                    <strong class="text-dark" id="profileCardMatricule">-</strong>
+                  </div>
+                  <div class="d-flex justify-content-between py-1">
+                    <span class="text-muted">Email :</span>
+                    <strong class="text-dark" id="profileCardEmail">email@entreprise.ci</strong>
+                  </div>
+                  <div class="d-flex justify-content-between py-1">
+                    <span class="text-muted">Statut :</span>
+                    <span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> Compte actif</span>
+                  </div>
+                  <div class="d-flex justify-content-between py-1">
+                    <span class="text-muted">Demandes créées :</span>
+                    <strong class="text-primary" id="profileCardDemandesCount">0 demande</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Colonne Formulaire de mise à jour -->
+            <div class="col-12 col-lg-8">
+              <div class="gp-card">
+                <form id="formUserProfile">
+                  <h3 class="gp-card-title mb-3">Informations professionnelles</h3>
+                  <div class="row g-3 mb-4">
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Nom et prénom</label>
+                      <input type="text" id="profileInputName" class="form-control" placeholder="Nom et prénom" required>
+                    </div>
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Adresse e-mail professionnelle</label>
+                      <input type="email" id="profileInputEmail" class="form-control" placeholder="email@entreprise.ci" required>
+                    </div>
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Numéro de téléphone direct</label>
+                      <input type="text" class="form-control" value="+225 07 00 00 00 01">
+                    </div>
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Bureau / Localisation interne</label>
+                      <input type="text" class="form-control" value="2ème étage - Aile B, Bureau 204">
+                    </div>
+                  </div>
+
+                  <h3 class="gp-card-title mb-3 pt-3 border-top">Sécurité & Mot de passe</h3>
+                  <div class="row g-3 mb-4">
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Nouveau mot de passe</label>
+                      <input type="password" class="form-control" placeholder="••••••••••••">
+                    </div>
+                    <div class="col-12 col-md-6">
+                      <label class="form-label fw-semibold">Confirmer le nouveau mot de passe</label>
+                      <input type="password" class="form-control" placeholder="••••••••••••">
+                    </div>
+                  </div>
+
+                  <div class="d-flex justify-content-end">
+                    <button type="submit" class="btn-gp-primary">
+                      <i class="bi bi-check-lg"></i> Mettre à jour mon profil
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       CONTAINER D'AUTHENTIFICATION (INSCRIPTION, CONNEXION, DÉCONNEXION)
+       ========================================================================== -->
+  <div id="authLayoutContainer" class="auth-layout-container">
+
+    <!-- 1. FORMULAIRE D'INSCRIPTION (REGISTER) -->
+    <div id="authView-register" class="auth-view-screen" style="display: none; width: 100%; max-width: 960px;">
+      <div class="auth-card-wrapper">
+        <!-- Colonne Branding Gauche -->
+        <div class="auth-branding-col">
+          <div>
+            <div class="d-flex align-items-center gap-2 mb-4">
+              <div class="brand-icon"><i class="bi bi-box-seam"></i></div>
+              <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+            </div>
+            <h2 class="fs-4 fw-bold text-white mb-2">Rejoignez l'espace collaborateur</h2>
+            <p class="text-secondary small">Simplifiez la gestion de vos demandes de fournitures, l'accès aux matériels et l'archivage de vos documents administratifs.</p>
+
+            <ul class="auth-feature-list">
+              <li class="auth-feature-item">
+                <i class="bi bi-check-circle-fill"></i>
+                <span>Circuit de validation automatisé et notifications en direct</span>
+              </li>
+              <li class="auth-feature-item">
+                <i class="bi bi-check-circle-fill"></i>
+                <span>Consultation en temps réel des stocks et disponibilités</span>
+              </li>
+              <li class="auth-feature-item">
+                <i class="bi bi-check-circle-fill"></i>
+                <span>Génération automatique de bons de sortie conformes (PDF)</span>
+              </li>
+              <li class="auth-feature-item">
+                <i class="bi bi-check-circle-fill"></i>
+                <span>Accès sécurisé à l'archive documentaire interne</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="pt-3 border-top border-secondary small text-muted d-flex align-items-center gap-2">
+            <i class="bi bi-shield-lock-fill text-success fs-5"></i>
+            <span>Plateforme interne sécurisée • Chiffrement SSL 256-bit</span>
+          </div>
+        </div>
+
+        <!-- Colonne Formulaire Droite -->
+        <div class="auth-form-col">
+          <div class="auth-header">
+            <h1 class="auth-title">Créer mon compte</h1>
+            <p class="auth-subtitle">Renseignez vos informations professionnelles pour débuter</p>
+          </div>
+
+          <form id="formRegisterUser">
+            <div class="row g-3 mb-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Nom et prénom <span class="text-danger">*</span></label>
+                <input type="text" id="regNom" class="form-control form-control-sm" placeholder="Ex: Kouamé Patrick" required>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Email d'entreprise <span class="text-danger">*</span></label>
+                <input type="email" id="regEmail" class="form-control form-control-sm" placeholder="prenom.nom@entreprise.ci" required>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Département / Service <span class="text-danger">*</span></label>
+                <select id="regService" class="form-select form-select-sm" required>
+                  <option value="">Choisir un service...</option>
+                  <option value="RH">Ressources Humaines</option>
+                  <option value="Logistique">Logistique & Approvisionnements</option>
+                  <option value="Informatique">Informatique & SI</option>
+                  <option value="Communication">Communication & Marketing</option>
+                  <option value="Finance">Finance & Comptabilité</option>
+                  <option value="Direction">Direction Générale</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Matricule interne <span class="text-muted">(optionnel)</span></label>
+                <input type="text" id="regMatricule" class="form-control form-control-sm" placeholder="Ex: EMP-2025-089">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Profil / Rôle souhaité <span class="text-danger">*</span></label>
+                <select id="regRole" class="form-select form-select-sm" required>
+                  <option value="Administrateur">Administrateur (Gestionnaire de stock)</option>
+                  <option value="Collaborateur" selected>Collaborateur (Demandeur)</option>
+                </select>
+                <small class="text-muted" style="font-size: 0.72rem;">Le premier compte créé devient Administrateur.</small>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Mot de passe <span class="text-danger">*</span></label>
+                <input type="password" id="regPassword" class="form-control form-control-sm" placeholder="••••••••••••" required>
+                <div class="password-strength-bar">
+                  <div class="password-strength-fill"></div>
+                </div>
+                <small class="text-muted" style="font-size: 0.72rem;">8 car. min, 1 majuscule, 1 chiffre</small>
+              </div>
+
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-semibold small">Confirmation mot de passe <span class="text-danger">*</span></label>
+                <input type="password" id="regPasswordConfirm" class="form-control form-control-sm" placeholder="••••••••••••" required>
+              </div>
+
+              <div class="col-12">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="regCharte" required checked>
+                  <label class="form-check-label text-muted" for="regCharte" style="font-size: 0.8rem;">
+                    J'atteste avoir pris connaissance de la <strong>charte informatique interne</strong> et des règles d'attribution des fournitures.
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-gp-primary w-100 justify-content-center py-2 mb-3">
+              <i class="bi bi-person-plus"></i> Finaliser l'inscription
+            </button>
+
+            <div class="text-center" style="font-size: 0.85rem;">
+              <span class="text-muted">Vous avez déjà un compte ?</span>
+              <a href="#login" class="text-primary fw-semibold ms-1 text-decoration-none" data-view-target="login">Se connecter</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. PAGE DE CONNEXION (LOGIN) -->
+    <div id="authView-login" class="auth-view-screen" style="display: none; width: 100%; max-width: 860px;">
+      <div class="auth-card-wrapper">
+        <div class="auth-branding-col">
+          <div>
+            <div class="d-flex align-items-center gap-2 mb-4">
+              <div class="brand-icon"><i class="bi bi-box-seam"></i></div>
+              <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+            </div>
+            <h2 class="fs-4 fw-bold text-white mb-2">Espace d'authentification</h2>
+            <p class="text-secondary small">Connectez-vous pour émettre vos demandes de matériel, valider les circuits ou gérer les inventaires.</p>
+
+            <div class="p-3 rounded mt-4" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);">
+              <div class="fw-bold text-white small mb-1"><i class="bi bi-shield-check text-success me-1"></i> Espace Sécurisé</div>
+              <p class="text-white-50 small mb-0">Connectez-vous avec vos identifiants ou inscrivez-vous pour créer votre compte administrateur / collaborateur.</p>
+            </div>
+          </div>
+
+          <div class="pt-3 border-top border-secondary small text-muted">
+            Direction des Systèmes d'Information • v2.5
+          </div>
+        </div>
+
+        <div class="auth-form-col">
+          <div class="auth-header">
+            <h1 class="auth-title">Connexion</h1>
+            <p class="auth-subtitle">Accédez à votre tableau de bord personnel</p>
+          </div>
+
+          <form id="formLoginUser">
+            <div class="mb-3">
+              <label class="form-label fw-semibold small">Identifiant / E-mail professionnel</label>
+              <div class="input-group">
+                <span class="input-group-text bg-white"><i class="bi bi-envelope text-muted"></i></span>
+                <input type="email" id="loginEmail" class="form-control" placeholder="nom.prenom@entreprise.ci" required>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label fw-semibold small mb-0">Mot de passe</label>
+                <a href="#" class="text-primary small text-decoration-none" onclick="event.preventDefault(); showToast('Veuillez contacter votre administrateur pour réinitialiser vos accès.', 'info');">Mot de passe oublié ?</a>
+              </div>
+              <div class="input-group">
+                <span class="input-group-text bg-white"><i class="bi bi-lock text-muted"></i></span>
+                <input type="password" id="loginPassword" class="form-control" placeholder="••••••••••••" required>
+              </div>
+            </div>
+
+            <div class="form-check mb-4">
+              <input class="form-check-input" type="checkbox" id="loginRemember" checked>
+              <label class="form-check-label text-muted small" for="loginRemember">
+                Rester connecté sur cet ordinateur
+              </label>
+            </div>
+
+            <button type="submit" class="btn-gp-primary w-100 justify-content-center py-2 mb-3">
+              <i class="bi bi-box-arrow-in-right"></i> Se connecter
+            </button>
+
+            <div class="text-center" style="font-size: 0.85rem;">
+              <span class="text-muted">Pas encore de compte ?</span>
+              <a href="#register" class="text-primary fw-semibold ms-1 text-decoration-none" data-view-target="register">Créer un compte</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==========================================================================
+       MODAL : APERÇU ET EXPORT PDF DU BON DE DEMANDE INTERNE
+       ========================================================================== -->
+  <div class="modal fade" id="modalOfficialPdf" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header bg-light">
+          <h5 class="modal-title fs-6 fw-bold text-dark d-flex align-items-center gap-2">
+            <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
+            Bon de Demande & Décharge de Matériel Interne (Document Officiel)
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4 bg-secondary-subtle">
+          
+          <!-- Feuille de Document Officiel Format Reçu/Bon -->
+          <div class="official-pdf-preview" id="printablePdfDocument">
+            <div class="pdf-header">
+              <div>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <div class="bg-primary text-white p-2 rounded fw-bold fs-5">
+                    <i class="bi bi-box-seam"></i>
+                  </div>
+                  <div>
+                    <h3 class="fw-bold mb-0 text-dark" style="font-size: 1.25rem;">GESTION+ ENTERPRISE</h3>
+                    <small class="text-muted">Système de gestion interne du parc matériel & décharges</small>
+                  </div>
+                </div>
+                <div class="small text-secondary">
+                  Siège Social • Direction Générale • Service Logistique & Magasin Central<br>
+                  Tél : +225 27 20 00 00 00 • contact@entreprise.ci
+                </div>
+              </div>
+              <div class="text-end">
+                <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-1 fs-6 fw-bold">APPROUVÉ & DÉCHARGÉ</span>
+                <div class="fw-bold text-dark fs-5 mt-2" id="pdfModalRef">DEM-00000</div>
+                <small class="text-muted" id="pdfModalDate">Émis le : -</small>
+              </div>
+            </div>
+
+            <div class="row g-3 mb-4 p-3 bg-light rounded" style="font-size: 0.885rem;">
+              <div class="col-6">
+                <div class="text-muted small">Collaborateur Emprunteur :</div>
+                <strong class="text-dark" id="pdfModalDemandeur">Demandeur</strong>
+                <div class="text-muted small mt-1">Département / Service :</div>
+                <strong class="text-dark" id="pdfModalService">-</strong>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">Type d'opération :</div>
+                <strong class="text-primary" id="pdfModalType">Dotation & Approvisionnement</strong>
+                <div class="text-muted small mt-1">Motif professionnel :</div>
+                <strong class="text-dark" id="pdfModalMotif">-</strong>
+              </div>
+            </div>
+
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <h5 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Désignation des équipements et matériels attribués</h5>
+              <span class="badge bg-light text-dark border">Propriété exclusive de l'entreprise</span>
+            </div>
+            <table class="table table-bordered table-sm mb-4" style="font-size: 0.85rem;">
+              <thead class="table-light">
+                <tr>
+                  <th>Code</th>
+                  <th>Article</th>
+                  <th>Catégorie</th>
+                  <th>Unité</th>
+                  <th class="text-center">Quantité demandée</th>
+                  <th class="text-center">Quantité accordée</th>
+                </tr>
+              </thead>
+              <tbody id="pdfModalArticlesBody">
+                <tr><td colspan="6" class="text-center py-3 text-muted">Sélectionnez une demande validée pour générer son Bon officiel.</td></tr>
+              </tbody>
+            </table>
+
+            <div class="pdf-signature-box">
+              <div class="signature-zone zone-collab">
+                <div>
+                  <div class="signature-header">
+                    <i class="bi bi-person-check-fill text-primary"></i>
+                    <span>Le Collaborateur Emprunteur</span>
+                  </div>
+                  <p class="signature-desc">Atteste avoir pris possession du matériel et s'engage à en faire un usage strictement professionnel.</p>
+                </div>
+                <div class="signature-stamp stamp-collab">
+                  <i class="bi bi-pen-fill"></i>
+                  <span id="pdfSignatureCollaborator">Signé numériquement par le demandeur</span>
+                </div>
+              </div>
+              <div class="signature-zone zone-admin">
+                <div>
+                  <div class="signature-header">
+                    <i class="bi bi-shield-check text-success"></i>
+                    <span>Le Gestionnaire du Parc & Magasin</span>
+                  </div>
+                  <p class="signature-desc">Autorise la sortie de stock et acte la remise physique du matériel.</p>
+                </div>
+                <div class="signature-stamp stamp-admin">
+                  <i class="bi bi-patch-check-fill"></i>
+                  <span id="pdfSignatureAdmin">Visé & Validé par le Gestionnaire de stock</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Fermer</button>
+          <button type="button" class="btn-gp-primary" id="btnPrintPdfDoc">
+            <i class="bi bi-printer"></i> Imprimer / Enregistrer en PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL : NOUVEL ARTICLE DE STOCK
+       ========================================================================== -->
+  <div class="modal fade" id="modalNewArticle" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header">
+          <h5 class="modal-title fs-6 fw-bold text-dark">Ajouter un nouvel article en stock</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="formNewArticle">
+          <div class="modal-body p-4">
+            <div class="row g-3">
+              <div class="col-6">
+                <label class="form-label fw-semibold">Code article</label>
+                <input type="text" id="artCode" class="form-control" value="ART-008" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Catégorie</label>
+                <select id="artCategory" class="form-select" required>
+                  <option value="Papeterie">Papeterie</option>
+                  <option value="Informatique">Informatique</option>
+                  <option value="Fournitures">Fournitures</option>
+                  <option value="Gadgets">Gadgets</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Désignation de l'article</label>
+                <input type="text" id="artName" class="form-control" placeholder="Ex: Cartouche Toner HP 85A" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Unité de mesure</label>
+                <input type="text" id="artUnit" class="form-control" placeholder="Pièce, Rame, Boîte" value="Pièce" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Quantité initiale</label>
+                <input type="number" id="artQty" class="form-control" value="25" min="0" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Seuil d'alerte</label>
+                <input type="number" id="artThreshold" class="form-control" value="5" min="1" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Emplacement</label>
+                <input type="text" class="form-control" placeholder="Ex: Rayon B3">
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn-gp-primary">Créer l'article</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL : AJUSTEMENT MANUEL DU STOCK
+       ========================================================================== -->
+  <div class="modal fade" id="modalNewMovement" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header">
+          <h5 class="modal-title fs-6 fw-bold text-dark">Ajuster manuellement le stock</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="formNewMovement">
+          <div class="modal-body p-4">
+            <div class="alert alert-info py-2 small" role="alert">
+              <i class="bi bi-info-circle me-1"></i>
+              Les distributions aux collaborateurs doivent passer par une demande. Utilisez cet écran uniquement pour un réapprovisionnement ou une correction exceptionnelle.
+            </div>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Article concerné</label>
+                <select id="mvtArticle" class="form-select" required><option value="">Sélectionner un article du stock...</option></select>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Type d'opération</label>
+                <select id="mvtType" class="form-select" required>
+                  <option value="Entrée">Entrée (Réapprovisionnement)</option>
+                  <option value="Sortie">Sortie (Correction exceptionnelle)</option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Quantité</label>
+                <input type="number" id="mvtQty" class="form-control" value="1" min="1" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Motif / Justificatif</label>
+                <input type="text" id="mvtReason" class="form-control" placeholder="Ex: Inventaire, casse, perte ou livraison fournisseur" required>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn-gp-primary">Enregistrer l'ajustement</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL : NOUVEL UTILISATEUR
+       ========================================================================== -->
+  <div class="modal fade" id="modalNewUser" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header">
+          <h5 class="modal-title fs-6 fw-bold text-dark">Ajouter un utilisateur</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="formNewUser">
+          <div class="modal-body p-4">
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Nom complet</label>
+                <input type="text" id="usrName" class="form-control" placeholder="Ex: Koffi Serge" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Adresse email professionnelle</label>
+                <input type="email" id="usrEmail" class="form-control" placeholder="koffi.serge@entreprise.ci" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Mot de passe initial</label>
+                <input type="password" id="usrPassword" class="form-control" placeholder="••••••••••••" value="Password2025!" required>
+                <small class="text-muted">Par défaut : Password2025! (modifiable ultérieurement)</small>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Profil / Rôle</label>
+                <select id="usrRole" class="form-select" required>
+                  <option value="Collaborateur">Collaborateur</option>
+                  <option value="Responsable">Responsable</option>
+                  <option value="Administrateur">Administrateur</option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold">Département / Service</label>
+                <select id="usrService" class="form-select" required>
+                  <option value="RH">Ressources Humaines</option>
+                  <option value="Logistique">Logistique</option>
+                  <option value="Informatique">Informatique</option>
+                  <option value="Direction">Direction</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn-gp-primary">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 9999;"></div>
+
+  <!-- Bootstrap 5.3 JS Bundle -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Chart.js 4.4 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <!-- Scripts applicatifs -->
+  <script src="{{ asset('js/charts.js') }}?v={{ filemtime(public_path('js/charts.js')) }}"></script>
+  <script src="{{ asset('js/app.js') }}?v={{ filemtime(public_path('js/app.js')) }}"></script>
+</body>
+</html>

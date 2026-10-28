@@ -1,0 +1,21 @@
+{
+  "name": "gestion-materiel-maquette",
+  "version": "1.0.0",
+  "description": "Maquette interactive et moderne du logiciel de gestion des stocks, demandes internes et documents administratifs (GESTION+)",
+  "scripts": {
+    "start": "serve . -p 3000",
+    "dev": "serve . -p 3000"
+  },
+  "keywords": [
+    "laravel",
+    "bootstrap",
+    "maquette",
+    "stock",
+    "gestion"
+  ],
+  "author": "GESTION+",
+  "license": "MIT",
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}
