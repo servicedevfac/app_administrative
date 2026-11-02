@@ -434,7 +434,7 @@ function setupStepper() {
         });
         const result = await res.json();
         if (result.success) {
-          showToast(`Demande ${result.data.reference} enregistrée avec succès dans MySQL !`, 'success');
+          showToast(`Demande ${result.data.reference} enregistrée avec succès !`, 'success');
           resetNewRequestForm();
           if (typeof BackendApi !== 'undefined') {
             await BackendApi.refreshAll({ showIndicator: true });
@@ -1025,7 +1025,7 @@ function setupModalsAndActions() {
         });
         const result = await res.json();
         if (res.ok && result.success) {
-          showToast(result.message || `Article "${name}" créé et enregistré dans MySQL !`, 'success');
+          showToast(result.message || `Article "${name}" créé avec succès !`, 'success');
           const modalEl = document.getElementById('modalNewArticle');
           const modalInstance = bootstrap.Modal.getInstance(modalEl);
           if (modalInstance) modalInstance.hide();
@@ -1074,7 +1074,7 @@ function setupModalsAndActions() {
         });
         const result = await res.json();
         if (result.success) {
-          showToast(`Mouvement enregistré dans MySQL (${type === 'Entrée' ? '+' : '-'}${qty}) !`, 'success');
+          showToast(`Mouvement enregistré avec succès (${type === 'Entrée' ? '+' : '-'}${qty}) !`, 'success');
           const modalEl = document.getElementById('modalNewMovement');
           const modalInstance = bootstrap.Modal.getInstance(modalEl);
           if (modalInstance) modalInstance.hide();
@@ -1118,7 +1118,7 @@ function setupModalsAndActions() {
         });
         const result = await res.json();
         if (result.success) {
-          showToast(`Document "${title}" archivé dans MySQL !`, 'success');
+          showToast(`Document "${title}" archivé avec succès !`, 'success');
           const modalEl = document.getElementById('modalNewDocument');
           const modalInstance = bootstrap.Modal.getInstance(modalEl);
           if (modalInstance) modalInstance.hide();
@@ -1176,7 +1176,7 @@ function setupModalsAndActions() {
         });
         const result = await res.json();
         if (result.success) {
-          showToast(`Utilisateur "${name}" créé et enregistré dans MySQL !`, 'success');
+          showToast(`Utilisateur "${name}" créé avec succès !`, 'success');
           const modalEl = document.getElementById('modalNewUser');
           const modalInstance = bootstrap.Modal.getInstance(modalEl);
           if (modalInstance) modalInstance.hide();
@@ -1696,7 +1696,7 @@ const BackendApi = {
           if (uJson.count === 0) {
             sessionStorage.removeItem('gestion_user');
             AppState.currentUser = null;
-            showToast('Aucun utilisateur en base de données. Créez votre compte Administrateur pour commencer.', 'info');
+            showToast('Aucun utilisateur enregistré. Créez votre compte Administrateur pour commencer.', 'info');
             navigateToView('register');
             return data;
           } else if (AppState.currentUser) {
@@ -1734,7 +1734,7 @@ const BackendApi = {
         badge.className = 'd-none d-md-flex align-items-center gap-2 px-2 py-1 rounded-pill me-2';
         badge.style.fontSize = '0.78rem';
         badge.style.cursor = 'pointer';
-        badge.setAttribute('title', 'Cliquez pour voir les détails de connexion MySQL');
+        badge.setAttribute('title', 'Cliquez pour voir l’état du service de données');
         badge.addEventListener('click', () => {
           const modalEl = document.getElementById('modalDbStatus') || this.createDbModal();
           const modal = new bootstrap.Modal(modalEl);
@@ -1748,10 +1748,10 @@ const BackendApi = {
     if (data.status === 'online') {
       if (data.database_connected) {
         badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-success-subtle text-success border border-success-subtle fw-semibold';
-        badge.innerHTML = '<span class="badge-status-dot bg-success" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>MySQL Connecté (Données Réelles)</span>';
+        badge.innerHTML = '<span class="badge-status-dot bg-success" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Données synchronisées</span>';
       } else {
         badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-semibold';
-        badge.innerHTML = '<span class="badge-status-dot bg-warning" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Laravel Actif • MySQL en attente (.env)</span>';
+        badge.innerHTML = '<span class="badge-status-dot bg-warning" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Service de données indisponible</span>';
       }
     } else {
       badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-light text-muted border fw-semibold';
@@ -1771,26 +1771,23 @@ const BackendApi = {
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content shadow-lg border-0">
           <div class="modal-header bg-dark text-white">
-            <h5 class="modal-title fs-6 fw-bold"><i class="bi bi-database-check me-2 text-warning"></i> Connexion Backend & MySQL</h5>
+            <h5 class="modal-title fs-6 fw-bold"><i class="bi bi-database-check me-2 text-warning"></i> État du service de données</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body p-4">
             <div class="alert alert-success d-flex align-items-center gap-2 mb-3">
               <i class="bi bi-check-circle-fill fs-5"></i>
-              <div>Base de données <strong>MySQL (gestion_materiel)</strong> connectée avec succès ! Les données affichées sont 100% dynamiques et réelles.</div>
+              <div>Le service de données est connecté. Les informations affichées sont à jour.</div>
             </div>
-            <h6 class="fw-bold mb-2">Paramètres de connexion actifs :</h6>
+            <h6 class="fw-bold mb-2">État de la synchronisation :</h6>
             <div class="bg-light p-3 rounded border font-monospace small mb-3">
-              DB_CONNECTION=mysql<br>
-              DB_HOST=127.0.0.1<br>
-              DB_PORT=3306<br>
-              DB_DATABASE=gestion_materiel<br>
-              DB_USERNAME=root
+              Service applicatif opérationnel<br>
+              Synchronisation des données active
             </div>
           </div>
           <div class="modal-footer bg-light py-2">
             <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Fermer</button>
-            <button type="button" class="btn btn-sm btn-primary" onclick="BackendApi.loadAllData().then(() => showToast('Données synchronisées depuis MySQL !', 'success'))">Synchroniser maintenant</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="BackendApi.loadAllData().then(() => showToast('Données synchronisées avec succès !', 'success'))">Synchroniser maintenant</button>
           </div>
         </div>
       </div>
@@ -1828,7 +1825,7 @@ const BackendApi = {
       }
 
       if (options.showIndicator && !options.silent) {
-        showToast('Données et stocks synchronisés en direct avec MySQL !', 'success');
+        showToast('Données et stocks synchronisés avec succès !', 'success');
       }
     } catch (e) {
       console.warn('Erreur lors du rafraîchissement global:', e);

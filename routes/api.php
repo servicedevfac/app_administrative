@@ -25,9 +25,9 @@ Route::get('/health', function () {
     try {
         DB::connection()->getPdo();
         $dbConnected = true;
-        $dbMessage = 'Connexion MySQL établie avec succès.';
+        $dbMessage = 'Service de données connecté avec succès.';
     } catch (Exception) {
-        $dbMessage = 'Connexion à la base de données indisponible.';
+        $dbMessage = 'Service de données indisponible.';
     }
 
     return response()->json([

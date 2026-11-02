@@ -106,7 +106,7 @@
           </div>
 
           <!-- Bouton Synchronisation / Rafraîchissement en direct -->
-          <button class="btn-icon-topbar" id="topbarBtnRefresh" title="Actualiser et synchroniser les données avec MySQL" style="border: none; background: transparent; cursor: pointer;">
+          <button class="btn-icon-topbar" id="topbarBtnRefresh" title="Actualiser et synchroniser les données" style="border: none; background: transparent; cursor: pointer;">
             <i class="bi bi-arrow-clockwise fs-5 text-secondary" id="iconRefreshSpin"></i>
           </button>
 
@@ -1495,7 +1495,7 @@
                 <div class="col-12">
                   <div class="p-3 bg-light rounded border d-flex align-items-center justify-content-between">
                     <div>
-                      <div class="fw-bold text-dark"><i class="bi bi-database me-2 text-primary"></i> Sauvegardes automatiques MySQL</div>
+                      <div class="fw-bold text-dark"><i class="bi bi-database me-2 text-primary"></i> Sauvegardes automatiques des données</div>
                       <small class="text-muted">Dernière sauvegarde automatique réussie : Aujourd'hui à 03:00 (Taille : 24.8 Mo)</small>
                     </div>
                     <button type="button" class="btn-gp-secondary btn-sm" onclick="showToast('Sauvegarde manuelle initiée avec succès !', 'success')">
