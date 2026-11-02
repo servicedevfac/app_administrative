@@ -1778,6 +1778,9 @@
               <div class="input-group">
                 <span class="input-group-text bg-white"><i class="bi bi-lock text-muted"></i></span>
                 <input type="password" id="loginPassword" class="form-control" placeholder="••••••••••••" required>
+                <button type="button" class="input-group-text bg-white" data-password-toggle="loginPassword" aria-label="Afficher le mot de passe" aria-pressed="false" title="Afficher le mot de passe">
+                  <i class="bi bi-eye" aria-hidden="true"></i>
+                </button>
               </div>
             </div>
 

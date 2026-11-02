@@ -1628,6 +1628,24 @@ function getFormattedTime() {
    9. Gestion de l'Authentification (Inscription, Connexion, Déconnexion) & Paramètres
    ========================================================================== */
 function setupAuthAndSettingsHandlers() {
+  document.querySelectorAll('[data-password-toggle]').forEach((toggleButton) => {
+    const passwordInput = document.getElementById(toggleButton.dataset.passwordToggle);
+    if (!passwordInput) return;
+
+    toggleButton.addEventListener('click', () => {
+      const shouldShowPassword = passwordInput.type === 'password';
+      passwordInput.type = shouldShowPassword ? 'text' : 'password';
+
+      const label = shouldShowPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe';
+      const icon = toggleButton.querySelector('i');
+      toggleButton.setAttribute('aria-label', label);
+      toggleButton.setAttribute('aria-pressed', String(shouldShowPassword));
+      toggleButton.setAttribute('title', label);
+      icon?.classList.toggle('bi-eye', !shouldShowPassword);
+      icon?.classList.toggle('bi-eye-slash', shouldShowPassword);
+    });
+  });
+
   // Inscription
   const formRegister = document.getElementById('formRegisterUser');
   if (formRegister) {
