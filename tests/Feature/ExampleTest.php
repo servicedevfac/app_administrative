@@ -36,6 +36,40 @@ class ExampleTest extends TestCase
         $response->assertStatus(200);
     }
 
+    public function test_article_codes_are_generated_automatically(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        Article::create([
+            'code' => 'ART-008',
+            'name' => 'Article existant',
+            'category' => 'Fournitures',
+            'unit' => 'Pièce',
+            'quantity' => 1,
+            'threshold' => 1,
+            'status' => Article::STATUS_LOW,
+            'is_available' => true,
+            'created_by' => $admin->id,
+        ]);
+
+        $response = $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/articles', [
+            'name' => 'Nouvel article',
+            'category' => 'Fournitures',
+            'unit' => 'Pièce',
+            'quantity' => 2,
+            'threshold' => 1,
+            'location' => 'Rayon B3',
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.code', 'ART-009');
+        $this->assertDatabaseHas('articles', [
+            'code' => 'ART-009',
+            'name' => 'Nouvel article',
+            'location' => 'Rayon B3',
+        ]);
+    }
+
     public function test_returning_material_restores_quantity_and_stock_state(): void
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);

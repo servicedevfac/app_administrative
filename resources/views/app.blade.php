@@ -1935,11 +1935,7 @@
         <form id="formNewArticle">
           <div class="modal-body p-4">
             <div class="row g-3">
-              <div class="col-6">
-                <label class="form-label fw-semibold">Code article</label>
-                <input type="text" id="artCode" class="form-control" value="ART-008" required>
-              </div>
-              <div class="col-6">
+              <div class="col-12">
                 <label class="form-label fw-semibold">Catégorie</label>
                 <select id="artCategory" class="form-select" required>
                   <option value="Papeterie">Papeterie</option>
@@ -1971,7 +1967,7 @@
               </div>
               <div class="col-6">
                 <label class="form-label fw-semibold">Emplacement</label>
-                <input type="text" class="form-control" placeholder="Ex: Rayon B3">
+                <input type="text" id="artLocation" class="form-control" placeholder="Ex: Rayon B3">
               </div>
             </div>
           </div>

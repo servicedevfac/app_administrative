@@ -1071,23 +1071,26 @@ function setupModalsAndActions() {
         showToast('Action restreinte : seuls les administrateurs et gestionnaires de stock peuvent créer des articles.', 'danger');
         return;
       }
-      const code = document.getElementById('artCode').value.trim();
       const name = document.getElementById('artName').value.trim();
       const cat = document.getElementById('artCategory').value;
       const unit = document.getElementById('artUnit').value;
       const qty = parseInt(document.getElementById('artQty').value, 10);
       const threshold = parseInt(document.getElementById('artThreshold').value, 10);
+      const location = document.getElementById('artLocation').value.trim();
       const currentUserId = AppState.currentUser?.id;
+      const submitButton = e.submitter;
+
+      if (submitButton) submitButton.disabled = true;
 
       try {
         const res = await fetch('/api/articles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ code, name, category: cat, unit, quantity: qty, threshold, created_by: currentUserId })
+          body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, location, created_by: currentUserId })
         });
         const result = await res.json();
-        if (result.success) {
-          showToast(`Article "${name}" créé et enregistré dans MySQL !`, 'success');
+        if (res.ok && result.success) {
+          showToast(result.message || `Article "${name}" créé et enregistré dans MySQL !`, 'success');
           const modalEl = document.getElementById('modalNewArticle');
           const modalInstance = bootstrap.Modal.getInstance(modalEl);
           if (modalInstance) modalInstance.hide();
@@ -1097,19 +1100,16 @@ function setupModalsAndActions() {
           }
           return;
         } else {
-          showToast(result.message || 'Erreur lors de la création de l\'article.', 'danger');
+          const validationMessage = Object.values(result.errors || {}).flat()[0];
+          showToast(validationMessage || result.message || 'Erreur lors de la création de l\'article.', 'danger');
           return;
         }
       } catch (err) {
         console.warn('API error:', err);
+        showToast('Impossible de contacter le serveur. L\'article n\'a pas été créé.', 'danger');
+      } finally {
+        if (submitButton) submitButton.disabled = false;
       }
-
-      addNewArticleRow({ code, name, category: cat, unit, qty, threshold });
-      const modalEl = document.getElementById('modalNewArticle');
-      const modalInstance = bootstrap.Modal.getInstance(modalEl);
-      if (modalInstance) modalInstance.hide();
-      formNewArticle.reset();
-      showToast(`Article "${name}" créé avec succès !`, 'success');
     });
   }
 

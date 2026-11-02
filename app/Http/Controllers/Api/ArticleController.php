@@ -7,6 +7,7 @@ use App\Models\Article;
 use App\Models\StockMovement;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -55,7 +56,6 @@ class ArticleController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'code' => 'required|string|unique:articles,code',
             'name' => 'required|string|max:255',
             'category' => ['required', 'string', Rule::exists('article_categories', 'name')->where('is_active', true)],
             'unit' => ['required', 'string', Rule::exists('measurement_units', 'name')->where('is_active', true)],
@@ -67,22 +67,38 @@ class ArticleController extends Controller
         $stockState = Article::stockState($validated['quantity'], $validated['threshold']);
         $userId = $this->resolveActorId($request, 'created_by');
 
-        $article = Article::create(array_merge($validated, [
-            'status' => $stockState['status'],
-            'is_available' => $stockState['is_available'],
-            'created_by' => $userId,
-        ]));
+        $article = DB::transaction(function () use ($validated, $stockState, $userId): Article {
+            $highestCodeNumber = Article::query()
+                ->lockForUpdate()
+                ->pluck('code')
+                ->reduce(function (int $highestNumber, string $code): int {
+                    if (preg_match('/^ART-(\d+)$/', $code, $matches) !== 1) {
+                        return $highestNumber;
+                    }
 
-        if ($validated['quantity'] > 0 && $userId) {
-            StockMovement::create([
-                'article_id' => $article->id,
-                'user_id' => $userId,
-                'type' => 'Entrée',
-                'source' => StockMovement::SOURCE_INITIAL_STOCK,
-                'quantity' => $validated['quantity'],
-                'reason' => 'Stock initial / Création de l\'article',
-            ]);
-        }
+                    return max($highestNumber, (int) $matches[1]);
+                }, 0);
+
+            $article = Article::create(array_merge($validated, [
+                'code' => sprintf('ART-%03d', $highestCodeNumber + 1),
+                'status' => $stockState['status'],
+                'is_available' => $stockState['is_available'],
+                'created_by' => $userId,
+            ]));
+
+            if ($validated['quantity'] > 0 && $userId) {
+                StockMovement::create([
+                    'article_id' => $article->id,
+                    'user_id' => $userId,
+                    'type' => 'Entrée',
+                    'source' => StockMovement::SOURCE_INITIAL_STOCK,
+                    'quantity' => $validated['quantity'],
+                    'reason' => 'Stock initial / Création de l\'article',
+                ]);
+            }
+
+            return $article;
+        }, attempts: 5);
 
         $this->recordActivity($request, 'article.created', $article, "Article {$article->code} créé.");
 
