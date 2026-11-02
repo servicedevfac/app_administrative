@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Article;
 use App\Models\MaterialRequest;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -13,10 +14,10 @@ class DashboardController extends Controller
     /**
      * Retourne les indicateurs consolidés (KPIs) selon le profil actif
      */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $role = $request->query('role', 'admin');
-        $userId = $request->query('user_id') ?? $request->user()?->id;
+        $role = $request->user()?->isAdmin() ? 'admin' : 'collaborator';
+        $userId = $request->user()?->id;
 
         if ($role === 'admin') {
             $totalArticles = Article::count();

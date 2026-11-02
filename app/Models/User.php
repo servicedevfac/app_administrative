@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Str;
 
 class User extends Authenticatable
 {
@@ -27,6 +28,7 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'api_token_hash',
     ];
 
     protected function casts(): array
@@ -34,6 +36,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'last_login_at' => 'datetime',
         ];
     }
 
@@ -60,6 +63,23 @@ class User extends Authenticatable
         return $role === self::ROLE_ADMIN
             ? 'assets/avatars/jean.svg'
             : 'assets/avatars/aminata.svg';
+    }
+
+    public function issueApiToken(): string
+    {
+        $token = Str::random(80);
+
+        $this->forceFill([
+            'api_token_hash' => hash('sha256', $token),
+            'last_login_at' => now(),
+        ])->save();
+
+        return $token;
+    }
+
+    public function revokeApiToken(): void
+    {
+        $this->forceFill(['api_token_hash' => null])->save();
     }
 
     public function materialRequests()

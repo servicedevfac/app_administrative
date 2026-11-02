@@ -515,6 +515,9 @@
               <p class="page-subtitle">Consultez les articles disponibles et effectuez vos demandes de réquisition</p>
             </div>
             <div class="d-flex align-items-center gap-2">
+              <button class="btn-gp-secondary admin-only-feature" type="button" onclick="downloadAuthenticatedFile('/api/articles-export', 'etat-stock.csv')">
+                <i class="bi bi-download"></i> Exporter le stock
+              </button>
               <button class="btn-gp-secondary admin-only-feature" data-view-target="stock-movements">
                 <i class="bi bi-clock-history"></i> Mouvements de stock
               </button>
@@ -803,7 +806,10 @@
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2">
                   <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionApprove"><i class="bi bi-check-circle me-2"></i> Approuver & Émettre le Bon</button></li>
+                  <li><button class="dropdown-item py-2 text-warning fw-semibold" id="btnActionCorrection"><i class="bi bi-pencil-square me-2"></i> Demander une correction</button></li>
+                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionDeliver"><i class="bi bi-box-seam me-2"></i> Marquer comme livrée</button></li>
                   <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionReturn"><i class="bi bi-arrow-return-left me-2"></i> Marquer comme Restituée</button></li>
+                  <li><button class="dropdown-item py-2 text-secondary fw-semibold" id="btnActionClose"><i class="bi bi-archive me-2"></i> Clôturer la demande</button></li>
                   <li><hr class="dropdown-divider"></li>
                   <li><button class="dropdown-item py-2 text-danger" id="btnActionReject"><i class="bi bi-x-circle me-2"></i> Rejeter la demande</button></li>
                 </ul>
@@ -956,7 +962,7 @@
           <div id="tabPane-history" class="detail-tab-pane" style="display: none;">
             <div class="gp-card">
               <h3 class="gp-card-title mb-3">Journal d'audit & Traçabilité</h3>
-              <ul class="list-group list-group-flush" style="font-size: 0.885rem;">
+              <ul class="list-group list-group-flush" id="detailRequestHistory" style="font-size: 0.885rem;">
                 <li class="list-group-item d-flex justify-content-between align-items-center py-3">
                   <div>
                     <span class="fw-semibold text-dark">Dépôt initial de la demande</span>
@@ -1078,7 +1084,7 @@
                 <div class="col-12">
                   <label class="form-label fw-semibold">Fichier <span class="text-danger">*</span></label>
                   <div class="dropzone-container" onclick="document.getElementById('fileUploadInput').click();">
-                    <input type="file" id="fileUploadInput" style="display:none;" onchange="showToast('Fichier attaché : ' + (this.files[0] ? this.files[0].name : ''), 'info')">
+                    <input type="file" id="fileUploadInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" required style="display:none;" onchange="showToast('Fichier attaché : ' + (this.files[0] ? this.files[0].name : ''), 'info')">
                     <div class="dropzone-icon">
                       <i class="bi bi-cloud-arrow-up"></i>
                     </div>
@@ -1183,7 +1189,7 @@
               <button class="btn-gp-secondary admin-only-feature" data-bs-toggle="modal" data-bs-target="#modalNewMovement">
                 <i class="bi bi-sliders"></i> Ajuster le stock
               </button>
-              <button class="btn-gp-primary" onclick="showToast('Export Excel/PDF des mouvements en cours...', 'success')">
+              <button class="btn-gp-primary" type="button" onclick="downloadAuthenticatedFile('/api/movements-export', 'mouvements-stock.csv')">
                 <i class="bi bi-download"></i> Exporter
               </button>
             </div>
@@ -1945,7 +1951,12 @@
               </div>
               <div class="col-6">
                 <label class="form-label fw-semibold">Unité de mesure</label>
-                <input type="text" id="artUnit" class="form-control" placeholder="Pièce, Rame, Boîte" value="Pièce" required>
+                <select id="artUnit" class="form-select" required>
+                  <option value="Pièce">Pièce</option>
+                  <option value="Rame">Rame</option>
+                  <option value="Boîte">Boîte</option>
+                  <option value="Unité">Unité</option>
+                </select>
               </div>
               <div class="col-6">
                 <label class="form-label fw-semibold">Quantité initiale</label>

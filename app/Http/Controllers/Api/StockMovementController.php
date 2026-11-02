@@ -6,15 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\Article;
 use App\Models\StockMovement;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class StockMovementController extends Controller
 {
     /**
      * Historique des mouvements de stock
      */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $query = StockMovement::with(['article', 'user', 'materialRequest']);
 
@@ -46,7 +48,7 @@ class StockMovementController extends Controller
     /**
      * Enregistrer manuellement une entrée ou sortie de matériel (Magasinier)
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'article_id' => 'required|exists:articles,id',
@@ -73,7 +75,7 @@ class StockMovementController extends Controller
             ], 403);
         }
 
-        return DB::transaction(function () use ($userId, $validated) {
+        return DB::transaction(function () use ($request, $userId, $validated) {
             $article = Article::findOrFail($validated['article_id']);
             $qty = $validated['quantity'];
 
@@ -101,6 +103,10 @@ class StockMovementController extends Controller
             ]);
 
             $movement->load(['article', 'user']);
+            $this->recordActivity($request, 'stock.adjusted', $movement, "Ajustement de {$qty} unité(s) sur {$article->code}.", [
+                'type' => $validated['type'],
+                'reason' => $validated['reason'],
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -109,5 +115,30 @@ class StockMovementController extends Controller
                 'article' => $article,
             ], 201);
         });
+    }
+
+    public function export(): StreamedResponse
+    {
+        $movements = StockMovement::query()->with(['article', 'user', 'materialRequest'])->latest()->get();
+
+        return response()->streamDownload(function () use ($movements): void {
+            $output = fopen('php://output', 'wb');
+            fputcsv($output, ['Date', 'Article', 'Type', 'Quantité', 'Origine', 'Demande', 'Utilisateur', 'Motif'], ';');
+
+            foreach ($movements as $movement) {
+                fputcsv($output, [
+                    $movement->created_at?->format('d/m/Y H:i'),
+                    $movement->article?->name,
+                    $movement->type,
+                    $movement->quantity,
+                    $movement->source,
+                    $movement->materialRequest?->reference,
+                    $movement->user?->name,
+                    $movement->reason,
+                ], ';');
+            }
+
+            fclose($output);
+        }, 'mouvements-stock-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 }

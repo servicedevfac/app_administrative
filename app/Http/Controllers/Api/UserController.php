@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -12,7 +13,7 @@ class UserController extends Controller
     /**
      * Liste des utilisateurs
      */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $query = User::query();
 
@@ -46,7 +47,7 @@ class UserController extends Controller
     /**
      * Création d'un nouvel utilisateur (Admin / Collaborateur / Responsable)
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -69,6 +70,8 @@ class UserController extends Controller
             'avatar' => User::defaultAvatar($role),
         ]);
 
+        $this->recordActivity($request, 'user.created', $user, "Utilisateur {$user->name} créé.");
+
         return response()->json([
             'success' => true,
             'message' => "Utilisateur \"{$user->name}\" créé avec succès.",
@@ -79,7 +82,7 @@ class UserController extends Controller
     /**
      * Détails d'un utilisateur
      */
-    public function show($id)
+    public function show(string $id): JsonResponse
     {
         $user = User::findOrFail($id);
 
@@ -92,7 +95,7 @@ class UserController extends Controller
     /**
      * Mise à jour d'un utilisateur
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
 
@@ -117,6 +120,7 @@ class UserController extends Controller
         }
 
         $user->update($validated);
+        $this->recordActivity($request, 'user.updated', $user, "Utilisateur {$user->name} mis à jour.");
 
         return response()->json([
             'success' => true,
@@ -128,20 +132,17 @@ class UserController extends Controller
     /**
      * Suppression d'un utilisateur (Sécurisé)
      */
-    public function destroy(Request $request, $id)
+    public function destroy(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
 
-        // 1. Interdire la suppression de son propre compte connecté
-        $currentUserId = $request->header('X-User-Id') ?? $request->input('current_user_id');
-        if ($currentUserId && (int) $currentUserId === (int) $id) {
+        if ($request->user()?->is($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Action interdite : vous ne pouvez pas supprimer votre propre compte Administrateur actif.',
             ], 403);
         }
 
-        // 2. Interdire la suppression du dernier compte Administrateur
         if ($user->role === User::ROLE_ADMIN) {
             $adminCount = User::where('role', User::ROLE_ADMIN)->count();
             if ($adminCount <= 1) {
@@ -153,6 +154,7 @@ class UserController extends Controller
         }
 
         $userName = $user->name;
+        $this->recordActivity($request, 'user.deleted', $user, "Utilisateur {$userName} supprimé.");
         $user->delete();
 
         return response()->json([

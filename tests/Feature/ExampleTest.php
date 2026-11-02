@@ -2,17 +2,32 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdministrativeDocument;
 use App\Models\Article;
 use App\Models\MaterialRequest;
+use App\Models\RequestDecision;
 use App\Models\RequestItem;
 use App\Models\StockMovement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * @return array<string, string>
+     */
+    private function authorizationHeaders(User $user): array
+    {
+        $this->app['auth']->forgetGuards();
+        $token = $user->issueApiToken();
+
+        return ['Authorization' => "Bearer {$token}"];
+    }
 
     public function test_the_application_returns_a_successful_response(): void
     {
@@ -53,9 +68,8 @@ class ExampleTest extends TestCase
             'quantity_approved' => 2,
         ]);
 
-        $response = $this->putJson("/api/requests/{$materialRequest->id}/return", [
-            'user_id' => $admin->id,
-        ]);
+        $response = $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/requests/{$materialRequest->id}/return");
 
         $response->assertOk()->assertJsonPath('success', true);
         $this->assertDatabaseHas('articles', [
@@ -108,9 +122,8 @@ class ExampleTest extends TestCase
             'quantity_approved' => 0,
         ]);
 
-        $response = $this->putJson("/api/requests/{$materialRequest->id}/approve", [
-            'approved_by' => $admin->id,
-        ]);
+        $response = $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/requests/{$materialRequest->id}/approve");
 
         $response->assertStatus(422)->assertJsonPath('success', false);
         $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 1]);
@@ -156,9 +169,8 @@ class ExampleTest extends TestCase
             'created_by' => $admin->id,
         ]);
 
-        $response = $this->postJson('/api/movements', [
+        $response = $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/movements', [
             'article_id' => $article->id,
-            'user_id' => $admin->id,
             'type' => 'Entrée',
             'quantity' => 3,
             'reason' => 'Livraison fournisseur',
@@ -189,9 +201,8 @@ class ExampleTest extends TestCase
             'is_available' => true,
         ]);
 
-        $response = $this->postJson('/api/movements', [
+        $response = $this->withHeaders($this->authorizationHeaders($collaborator))->postJson('/api/movements', [
             'article_id' => $article->id,
-            'user_id' => $collaborator->id,
             'type' => 'Sortie',
             'quantity' => 1,
             'reason' => 'Distribution directe',
@@ -200,5 +211,95 @@ class ExampleTest extends TestCase
         $response->assertForbidden();
         $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 4]);
         $this->assertDatabaseCount('stock_movements', 0);
+    }
+
+    public function test_private_api_rejects_an_unauthenticated_request(): void
+    {
+        $this->getJson('/api/articles')->assertUnauthorized();
+    }
+
+    public function test_collaborator_cannot_access_administration_routes(): void
+    {
+        $collaborator = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+
+        $this->withHeaders($this->authorizationHeaders($collaborator))
+            ->getJson('/api/users')
+            ->assertForbidden();
+    }
+
+    public function test_administrator_can_store_and_download_a_real_document(): void
+    {
+        Storage::fake('local');
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $headers = $this->authorizationHeaders($admin);
+
+        $response = $this->withHeaders($headers)->post('/api/documents', [
+            'title' => 'Procédure achats',
+            'category' => 'Procédures',
+            'type' => 'PDF',
+            'service' => 'Administration',
+            'reference' => 'DOC-2026-001',
+            'file' => UploadedFile::fake()->create('procedure.pdf', 48, 'application/pdf'),
+        ], ['Accept' => 'application/json']);
+
+        $response->assertCreated()->assertJsonPath('success', true);
+        $document = AdministrativeDocument::query()->firstOrFail();
+        Storage::disk('local')->assertExists($document->file_path);
+
+        $this->withHeaders($headers)
+            ->get("/api/documents/{$document->id}/download")
+            ->assertOk()
+            ->assertHeader('content-disposition');
+    }
+
+    public function test_request_workflow_records_each_decision(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $collaborator = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $article = Article::create([
+            'code' => 'ART-005',
+            'name' => 'Bloc-notes',
+            'category' => 'Papeterie',
+            'unit' => 'Pièce',
+            'quantity' => 10,
+            'threshold' => 2,
+            'status' => Article::STATUS_AVAILABLE,
+            'is_available' => true,
+            'created_by' => $admin->id,
+        ]);
+
+        $created = $this->withHeaders($this->authorizationHeaders($collaborator))->postJson('/api/requests', [
+            'motif' => 'Réunion',
+            'service' => 'Direction',
+            'save_as_draft' => true,
+            'items' => [['article_id' => $article->id, 'quantity' => 2]],
+        ])->assertCreated();
+
+        $requestId = $created->json('data.id');
+        $this->withHeaders($this->authorizationHeaders($collaborator))
+            ->putJson("/api/requests/{$requestId}/submit")
+            ->assertOk();
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/requests/{$requestId}/request-correction", ['reason' => 'Préciser le motif.'])
+            ->assertOk();
+        $this->withHeaders($this->authorizationHeaders($collaborator))
+            ->putJson("/api/requests/{$requestId}/cancel")
+            ->assertOk();
+
+        $this->assertSame(4, RequestDecision::query()->where('material_request_id', $requestId)->count());
+        $this->assertDatabaseHas('material_requests', [
+            'id' => $requestId,
+            'status' => MaterialRequest::STATUS_CANCELLED,
+        ]);
+    }
+
+    public function test_administrator_can_export_requests_as_csv(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->get('/api/requests-export')
+            ->assertOk()
+            ->assertDownload();
     }
 }

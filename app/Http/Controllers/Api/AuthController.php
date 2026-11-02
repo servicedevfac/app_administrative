@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -12,7 +13,7 @@ class AuthController extends Controller
     /**
      * Authentification utilisateur
      */
-    public function login(Request $request)
+    public function login(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'email' => 'required|email',
@@ -32,13 +33,14 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Connexion réussie.',
             'user' => $user,
+            'token' => $user->issueApiToken(),
         ]);
     }
 
     /**
      * Inscription d'un nouvel utilisateur
      */
-    public function register(Request $request)
+    public function register(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -71,19 +73,28 @@ class AuthController extends Controller
             'success' => true,
             'message' => "Compte {$roleLabel} créé avec succès pour {$user->name}.",
             'user' => $user,
+            'token' => $user->issueApiToken(),
         ], 201);
     }
 
     /**
      * Utilisateur actuellement connecté
      */
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
-        $user = $request->user() ?? User::first();
+        return response()->json([
+            'success' => true,
+            'user' => $request->user(),
+        ]);
+    }
+
+    public function logout(Request $request): JsonResponse
+    {
+        $request->user()?->revokeApiToken();
 
         return response()->json([
             'success' => true,
-            'user' => $user,
+            'message' => 'Déconnexion réussie.',
         ]);
     }
 }

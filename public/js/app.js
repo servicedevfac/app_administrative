@@ -13,6 +13,39 @@ const AppState = {
   activeDetailTab: 'info'
 };
 
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, options = {}) => {
+  const requestUrl = typeof input === 'string' ? input : input.url;
+  const isApiRequest = requestUrl.startsWith('/api/') || requestUrl.startsWith(`${window.location.origin}/api/`);
+  const token = sessionStorage.getItem('gestion_token');
+
+  if (!isApiRequest || !token) return nativeFetch(input, options);
+
+  const headers = new Headers(options.headers || (typeof input !== 'string' ? input.headers : undefined));
+  headers.set('Authorization', `Bearer ${token}`);
+  headers.set('Accept', 'application/json');
+
+  return nativeFetch(input, { ...options, headers });
+};
+
+window.downloadAuthenticatedFile = async (url, fallbackName = 'export.csv') => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Export refusé');
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const fileNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = fileNameMatch?.[1] || fallbackName;
+    link.click();
+    URL.revokeObjectURL(blobUrl);
+  } catch (error) {
+    showToast('L’export est indisponible ou vous n’avez pas les droits nécessaires.', 'danger');
+  }
+};
+
 // Initialisation au chargement du DOM
 document.addEventListener('DOMContentLoaded', () => {
   setupNavigation();
@@ -26,16 +59,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Restaurer l'utilisateur depuis la session
   const storedUser = sessionStorage.getItem('gestion_user');
-  if (storedUser) {
+  const storedToken = sessionStorage.getItem('gestion_token');
+  const hasAuthenticatedSession = Boolean(storedUser && storedToken);
+  if (hasAuthenticatedSession) {
     try {
       applyUser(JSON.parse(storedUser));
     } catch (e) {}
   } else {
-    setUserRole(AppState.currentRole, false);
+    navigateToView('login');
   }
 
-  // Restaurer ou initialiser la vue via l'URL hash
-  handleRouteHash();
+  // Restaurer la vue uniquement pour une session authentifiée
+  if (hasAuthenticatedSession) handleRouteHash();
   window.addEventListener('hashchange', handleRouteHash);
 
   // Vérifier la connexion avec le Backend Laravel & MySQL
@@ -134,7 +169,11 @@ function handleRouteHash() {
 
 function navigateToView(viewId, updateHash = true) {
   if (viewId === 'logout') {
+    if (sessionStorage.getItem('gestion_token')) {
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    }
     sessionStorage.removeItem('gestion_user');
+    sessionStorage.removeItem('gestion_token');
     AppState.currentUser = null;
     showToast('Vous avez été déconnecté avec succès.', 'info');
     navigateToView('login', updateHash);
@@ -618,98 +657,39 @@ function setupDetailTabs() {
   });
 }
 
-function approveRequest(requestId, triggerBtn = null) {
+function requestStatusBadge(status) {
+  const classes = {
+    'Approuvée': 'badge-approved',
+    'Livrée': 'badge-approved',
+    'Restituée': 'badge-approved',
+    'Clôturée': 'badge-approved',
+    'Rejetée': 'badge-rejected',
+    'À corriger': 'badge-rejected',
+    'Annulée': 'badge-rejected',
+    'Brouillon': 'badge-pending'
+  };
+  const badgeClass = classes[status] || 'badge-pending';
+  return `<span class="badge-status ${badgeClass}"><span class="badge-status-dot"></span> ${status || 'En attente'}</span>`;
+}
+
+async function approveRequest(requestId, triggerBtn = null) {
   if (!requestId) return;
-  // Contrôle strict des rôles : Seul le gestionnaire de stock / administrateur peut approuver
   if (AppState.currentRole !== 'admin') {
     showToast('Accès refusé : Seul le Gestionnaire de stock / Administrateur a l\'autorité d\'approuver les demandes.', 'danger');
     return;
   }
-
-  // 1. Mettre à jour le badge de statut
-  const badge = document.getElementById('requestDetailStatusBadge');
-  if (badge) {
-    badge.className = 'badge-status badge-approved';
-    badge.innerHTML = '<span class="badge-status-dot"></span> Approuvée (Bon émis)';
-  }
-
-  // 2. Mettre à jour l'étape sur la timeline
-  const stepCurrent = document.getElementById('timelineStepCurrent');
-  if (stepCurrent) {
-    stepCurrent.className = 'timeline-step done';
-    const marker = stepCurrent.querySelector('.timeline-marker');
-    if (marker) marker.innerHTML = '<i class="bi bi-check"></i>';
-    const title = stepCurrent.querySelector('.timeline-title');
-    if (title) { title.className = 'timeline-title'; title.textContent = 'Validation effectuée'; }
-  }
-
-  const stepApproval = document.getElementById('timelineStepApproved');
-  if (stepApproval) {
-    stepApproval.className = 'timeline-step done';
-    const marker = stepApproval.querySelector('.timeline-marker');
-    if (marker) marker.innerHTML = '<i class="bi bi-check-lg"></i>';
-    const title = stepApproval.querySelector('.timeline-title');
-    if (title) { title.className = 'timeline-title text-success fw-bold'; title.textContent = 'Approuvée & Bon émis'; }
-    const timeEl = stepApproval.querySelector('.timeline-time');
-    const approverName = (AppState.currentUser && AppState.currentUser.name) ? AppState.currentUser.name : 'le Gestionnaire';
-    if (timeEl) timeEl.textContent = 'Aujourd\'hui à ' + getFormattedTime() + ' • Visé par ' + approverName + ' (Bon officiel émis)';
-  }
-
-  // 3. Mettre à jour le bouton déclencheur dans le tableau du superviseur
-  if (triggerBtn) {
-    const parentTd = triggerBtn.closest('td');
-    if (parentTd) {
-      parentTd.innerHTML = `
-        <button class="btn btn-sm btn-outline-success py-0 px-2 me-1" onclick="openPdfModal('${requestId}')">
-          <i class="bi bi-file-earmark-check me-1"></i> Bon PDF
-        </button>
-        <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openRequestDetail('${requestId}')">Détails</button>
-      `;
-      const tr = parentTd.closest('tr');
-      if (tr) {
-        const statusTd = tr.querySelector('.badge-status');
-        if (statusTd) {
-          statusTd.className = 'badge-status badge-approved';
-          statusTd.innerHTML = '<span class="badge-status-dot"></span> Approuvée';
-        }
-      }
-    }
-  }
-
-  // 4. Mettre à jour l'état local dans AppState.currentRequests
-  if (AppState.currentRequests) {
-    const found = AppState.currentRequests.find(r => r.reference === requestId);
-    if (found) found.status = 'Approuvée';
-  }
-
-  // 5. Notification Toast de confirmation
-  showToast(`Demande ${requestId} approuvée ! Bon officiel généré avec succès.`, 'success');
-
-  // 6. Synchronisation avec l'API avant d'ouvrir le bon officiel
   if (typeof BackendApi !== 'undefined' && BackendApi.approveRequest) {
-    BackendApi.approveRequest(requestId).then((approved) => {
-      if (approved) openPdfModal(requestId);
-    });
-  } else {
-    openPdfModal(requestId);
+    const approved = await BackendApi.approveRequest(requestId, triggerBtn);
+    if (approved) {
+      openPdfModal(requestId);
+    }
   }
 }
 
-function cancelCollaboratorRequest(requestId) {
+async function cancelCollaboratorRequest(requestId) {
   if (!requestId) return;
   if (confirm(`Confirmez-vous l'annulation de votre demande ${requestId} ?`)) {
-    const badge = document.getElementById('requestDetailStatusBadge');
-    if (badge) {
-      badge.className = 'badge-status badge-rejected';
-      badge.innerHTML = '<span class="badge-status-dot"></span> Annulée';
-    }
-    const btnCancel = document.getElementById('btnCollaboratorCancel');
-    if (btnCancel) btnCancel.style.display = 'none';
-    if (AppState.currentRequests) {
-      const found = AppState.currentRequests.find(r => r.reference === requestId);
-      if (found) found.status = 'Rejetée';
-    }
-    showToast(`Votre demande ${requestId} a été annulée.`, 'info');
+    await BackendApi.transitionRequest(requestId, 'cancel');
   }
 }
 
@@ -727,18 +707,7 @@ function openRequestDetail(reference) {
 
   // Badge Statut
   const badge = document.getElementById('requestDetailStatusBadge');
-  if (badge) {
-    if (req.status === 'Approuvée') {
-      badge.className = 'badge-status badge-approved';
-      badge.innerHTML = '<span class="badge-status-dot"></span> Approuvée';
-    } else if (req.status === 'Rejetée') {
-      badge.className = 'badge-status badge-rejected';
-      badge.innerHTML = '<span class="badge-status-dot"></span> Rejetée';
-    } else {
-      badge.className = 'badge-status badge-pending';
-      badge.innerHTML = '<span class="badge-status-dot"></span> En attente';
-    }
-  }
+  if (badge) badge.outerHTML = requestStatusBadge(req.status).replace('<span ', '<span id="requestDetailStatusBadge" ');
 
   // Sous-titre & Demandeur
   const subtitle = document.getElementById('detailRequestSubtitle');
@@ -774,7 +743,7 @@ function openRequestDetail(reference) {
   const timeStep2 = document.getElementById('timelineStepCurrent');
   const timeStep3 = document.getElementById('timelineStepApproved');
   if (timeStep2 && timeStep3) {
-    if (req.status === 'Approuvée') {
+    if (['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status)) {
       timeStep2.className = 'timeline-step done';
       const m2 = timeStep2.querySelector('.timeline-marker');
       if (m2) m2.innerHTML = '<i class="bi bi-check"></i>';
@@ -862,7 +831,38 @@ function openRequestDetail(reference) {
   const btnCancel = document.getElementById('btnCollaboratorCancel');
   if (btnCancel) {
     btnCancel.onclick = () => cancelCollaboratorRequest(req.reference);
-    btnCancel.style.display = (req.status === 'En attente') ? 'inline-block' : 'none';
+    btnCancel.style.display = ['Brouillon', 'En attente', 'À corriger'].includes(req.status) ? 'inline-block' : 'none';
+  }
+
+  const actionVisibility = {
+    btnActionApprove: req.status === 'En attente',
+    btnActionCorrection: req.status === 'En attente',
+    btnActionReject: req.status === 'En attente',
+    btnActionDeliver: req.status === 'Approuvée',
+    btnActionReturn: ['Approuvée', 'Livrée'].includes(req.status),
+    btnActionClose: ['Livrée', 'Restituée'].includes(req.status)
+  };
+  Object.entries(actionVisibility).forEach(([id, visible]) => {
+    const action = document.getElementById(id);
+    if (action) action.closest('li').style.display = visible ? '' : 'none';
+  });
+
+  const history = document.getElementById('detailRequestHistory');
+  if (history) {
+    const labels = {
+      created: 'Demande créée', submitted: 'Demande soumise', approved: 'Demande approuvée', cancelled: 'Demande annulée',
+      rejected: 'Demande rejetée', correction_requested: 'Correction demandée',
+      delivered: 'Matériel livré', returned: 'Matériel restitué', closed: 'Demande clôturée'
+    };
+    const decisions = req.decisions || [];
+    history.innerHTML = decisions.length ? decisions.map(decision => `
+      <li class="list-group-item d-flex justify-content-between align-items-center py-3 gap-3">
+        <div>
+          <span class="fw-semibold text-dark">${labels[decision.action] || decision.action}</span>
+          <div class="text-muted small">${decision.comment || `${decision.status_from || 'Création'} → ${decision.status_to}`}${decision.user?.name ? ` • ${decision.user.name}` : ''}</div>
+        </div>
+        <span class="text-muted small text-nowrap">${new Date(decision.created_at).toLocaleString('fr-FR')}</span>
+      </li>`).join('') : '<li class="list-group-item text-muted py-3">Aucun événement enregistré.</li>';
   }
 
   // Nom Bon PDF
@@ -898,7 +898,7 @@ async function openPdfModal(reference) {
     return false;
   }
 
-  if (!['Approuvée', 'Restituée'].includes(req.status)) {
+  if (!['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status)) {
     showToast('Le bon est disponible uniquement après l’approbation de la demande.', 'warning');
     return false;
   }
@@ -975,7 +975,10 @@ function setupModalsAndActions() {
   // Actions de validation, restitution et rejet de la demande
   const btnApprove = document.getElementById('btnActionApprove');
   const btnReject = document.getElementById('btnActionReject');
+  const btnCorrection = document.getElementById('btnActionCorrection');
+  const btnDeliver = document.getElementById('btnActionDeliver');
   const btnReturn = document.getElementById('btnActionReturn');
+  const btnClose = document.getElementById('btnActionClose');
 
   document.querySelectorAll('.js-open-selected-bon').forEach(button => {
     button.addEventListener('click', () => openPdfModal(AppState.selectedRequestRef));
@@ -1009,6 +1012,32 @@ function setupModalsAndActions() {
         if (typeof BackendApi !== 'undefined') {
           await BackendApi.returnRequest(activeRef);
         }
+      }
+    });
+  }
+
+  if (btnCorrection) {
+    btnCorrection.addEventListener('click', async () => {
+      const activeRef = AppState.selectedRequestRef;
+      const reason = activeRef ? prompt('Précisez la correction attendue :') : null;
+      if (reason?.trim()) await BackendApi.transitionRequest(activeRef, 'request-correction', { reason: reason.trim() });
+    });
+  }
+
+  if (btnDeliver) {
+    btnDeliver.addEventListener('click', async () => {
+      const activeRef = AppState.selectedRequestRef;
+      if (activeRef && confirm(`Confirmer la remise physique des articles pour ${activeRef} ?`)) {
+        await BackendApi.transitionRequest(activeRef, 'deliver');
+      }
+    });
+  }
+
+  if (btnClose) {
+    btnClose.addEventListener('click', async () => {
+      const activeRef = AppState.selectedRequestRef;
+      if (activeRef && confirm(`Clôturer définitivement la demande ${activeRef} ?`)) {
+        await BackendApi.transitionRequest(activeRef, 'close');
       }
     });
   }
@@ -1174,18 +1203,61 @@ function setupModalsAndActions() {
   // Formulaire pleine page Nouveau Document (View document-new)
   const fullPageNewDoc = document.getElementById('formFullPageNewDoc');
   if (fullPageNewDoc) {
-    fullPageNewDoc.addEventListener('submit', (e) => {
+    fullPageNewDoc.addEventListener('submit', async (e) => {
       e.preventDefault();
       const title = document.getElementById('fpDocTitle').value;
       const cat = document.getElementById('fpDocCategory').value;
       const type = document.getElementById('fpDocType').value;
       const service = document.getElementById('fpDocService').value;
+      const file = document.getElementById('fileUploadInput').files[0];
 
-      addNewDocumentRow({ title, category: cat, type, service });
-      showToast(`Document "${title}" enregistré et indexé avec succès !`, 'success');
-      navigateToView('documents');
+      if (!file) {
+        showToast('Sélectionnez le fichier à archiver.', 'warning');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('title', title);
+      formData.append('category', cat);
+      formData.append('type', type);
+      formData.append('service', service);
+      formData.append('file', file);
+
+      try {
+        const response = await fetch('/api/documents', { method: 'POST', body: formData });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          showToast(result.message || 'Le document n’a pas pu être archivé.', 'danger');
+          return;
+        }
+
+        showToast(`Document "${title}" enregistré et sécurisé avec succès !`, 'success');
+        fullPageNewDoc.reset();
+        await BackendApi.loadDocuments();
+        navigateToView('documents');
+      } catch (error) {
+        console.warn('Document upload error:', error);
+        showToast('Impossible de téléverser le document.', 'danger');
+      }
     });
   }
+
+  window.downloadDocument = async (documentId, fileName) => {
+    try {
+      const response = await fetch(`/api/documents/${documentId}/download`);
+      if (!response.ok) throw new Error('Téléchargement refusé');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName || 'document';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      showToast('Le fichier est indisponible ou vous n’avez pas les droits nécessaires.', 'danger');
+    }
+  };
 
   // Modal Nouvel Utilisateur
   const formNewUser = document.getElementById('formNewUser');
@@ -1582,8 +1654,9 @@ function setupAuthAndSettingsHandlers() {
           body: JSON.stringify({ name, email, service, matricule, role, password: pwd })
         });
         const result = await res.json();
-        if (result.success && result.user) {
+        if (result.success && result.user && result.token) {
           sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
+          sessionStorage.setItem('gestion_token', result.token);
           applyUser(result.user);
           showToast(result.message || `Compte créé avec succès pour ${name} !`, 'success');
           navigateToView('dashboard');
@@ -1599,11 +1672,7 @@ function setupAuthAndSettingsHandlers() {
         console.warn('Register error:', err);
       }
 
-      const fallbackUser = { name, email, service, matricule, role: role === 'Administrateur' ? 'admin' : 'collaborator' };
-      sessionStorage.setItem('gestion_user', JSON.stringify(fallbackUser));
-      applyUser(fallbackUser);
-      showToast(`Compte créé avec succès pour ${name} !`, 'success');
-      navigateToView('dashboard');
+      showToast('Impossible de contacter le serveur. Le compte n’a pas été créé.', 'danger');
     });
   }
 
@@ -1622,8 +1691,9 @@ function setupAuthAndSettingsHandlers() {
           body: JSON.stringify({ email, password })
         });
         const result = await res.json();
-        if (result.success && result.user) {
+        if (result.success && result.user && result.token) {
           sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
+          sessionStorage.setItem('gestion_token', result.token);
           applyUser(result.user);
           showToast(`Bienvenue ${result.user.name} ! Bon retour sur votre espace.`, 'success');
           navigateToView('dashboard');
@@ -1814,14 +1884,15 @@ const BackendApi = {
     if (spinIcon) spinIcon.classList.add('spin-animation');
 
     try {
-      await Promise.allSettled([
+      const commonLoads = [
         this.loadArticles(),
         this.loadRequests(),
-        this.loadMovements(),
-        this.loadDashboard(),
-        this.loadUsers(),
-        this.loadDocuments()
-      ]);
+        this.loadDashboard()
+      ];
+      const administrationLoads = AppState.currentRole === 'admin'
+        ? [this.loadMovements(), this.loadUsers(), this.loadDocuments(), this.loadReferenceData()]
+        : [];
+      await Promise.allSettled([...commonLoads, ...administrationLoads]);
 
       if (typeof updateCollaboratorLiveTracker === 'function') {
         updateCollaboratorLiveTracker();
@@ -1918,6 +1989,24 @@ const BackendApi = {
       }
     } catch (e) {
       console.warn('loadUsers error:', e);
+    }
+  },
+
+  async loadReferenceData() {
+    try {
+      const res = await fetch(`${this.baseUrl}/reference-data`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const categorySelect = document.getElementById('artCategory');
+      const unitSelect = document.getElementById('artUnit');
+      if (categorySelect && json.categories?.length) {
+        categorySelect.innerHTML = json.categories.map(category => `<option value="${category.name}">${category.name}</option>`).join('');
+      }
+      if (unitSelect && json.units?.length) {
+        unitSelect.innerHTML = json.units.map(unit => `<option value="${unit.name}">${unit.name}${unit.symbol ? ` (${unit.symbol})` : ''}</option>`).join('');
+      }
+    } catch (e) {
+      console.warn('loadReferenceData error:', e);
     }
   },
 
@@ -2208,9 +2297,7 @@ const BackendApi = {
       if (collabTbody) {
         collabTbody.innerHTML = '';
         requests.slice(0, 5).forEach(r => {
-          let badge = '<span class="badge-status badge-pending"><span class="badge-status-dot"></span> En attente</span>';
-          if (r.status === 'Approuvée') badge = '<span class="badge-status badge-approved"><span class="badge-status-dot"></span> Approuvée</span>';
-          else if (r.status === 'Rejetée') badge = '<span class="badge-status badge-rejected"><span class="badge-status-dot"></span> Rejetée</span>';
+          const badge = requestStatusBadge(r.status);
 
           const tr = document.createElement('tr');
           tr.innerHTML = `
@@ -2219,7 +2306,7 @@ const BackendApi = {
             <td>${r.items?.length || 1} article(s) (${r.motif})</td>
             <td>${badge}</td>
             <td class="text-end">
-              ${r.status === 'Approuvée' || r.status === 'Restituée' ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" onclick="openPdfModal('${r.reference}')">Bon PDF</button>` : ''}
+              ${['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" onclick="openPdfModal('${r.reference}')">Bon PDF</button>` : ''}
               <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openRequestDetail('${r.reference}')">Détails</button>
             </td>
           `;
@@ -2232,9 +2319,7 @@ const BackendApi = {
       if (allTbody) {
         allTbody.innerHTML = '';
         requests.forEach(r => {
-          let badge = '<span class="badge-status badge-pending"><span class="badge-status-dot"></span> En attente</span>';
-          if (r.status === 'Approuvée') badge = '<span class="badge-status badge-approved"><span class="badge-status-dot"></span> Approuvée</span>';
-          else if (r.status === 'Rejetée') badge = '<span class="badge-status badge-rejected"><span class="badge-status-dot"></span> Rejetée</span>';
+          const badge = requestStatusBadge(r.status);
 
           const tr = document.createElement('tr');
           tr.innerHTML = `
@@ -2348,7 +2433,7 @@ const BackendApi = {
               <td>${doc.service}</td>
               <td class="text-muted small">${doc.created_at ? new Date(doc.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui'}</td>
               <td class="text-end">
-                <button class="btn-gp-icon" title="Consulter le document" onclick="${doc.material_request?.reference ? `openPdfModal('${doc.material_request.reference}')` : `showToast('Ce document ne possède pas d’aperçu imprimable.', 'info')`}"><i class="bi bi-download"></i></button>
+                <button class="btn-gp-icon" title="Consulter le document" onclick="${doc.material_request?.reference ? `openPdfModal('${doc.material_request.reference}')` : `downloadDocument(${doc.id}, '${(doc.original_name || doc.title).replace(/'/g, "\\'")}')`}"><i class="bi bi-download"></i></button>
                 <button class="btn-gp-icon" title="Options"><i class="bi bi-three-dots"></i></button>
               </td>
             `;
@@ -2511,6 +2596,30 @@ const BackendApi = {
       }
     } catch (e) {
       console.warn('API reject error:', e.message);
+    }
+  },
+
+  async transitionRequest(requestId, action, payload = {}) {
+    if (!this.isOnline || !this.isDbConnected) return false;
+    try {
+      const res = await fetch(`${this.baseUrl}/requests/${encodeURIComponent(requestId)}/${action}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Le changement de statut a échoué.', 'danger');
+        return false;
+      }
+      showToast(data.message || 'Statut de la demande mis à jour.', 'success');
+      await this.refreshAll({ showIndicator: true });
+      openRequestDetail(requestId);
+      return true;
+    } catch (e) {
+      console.warn('API request transition error:', e.message);
+      showToast('Impossible de mettre à jour la demande.', 'danger');
+      return false;
     }
   },
 

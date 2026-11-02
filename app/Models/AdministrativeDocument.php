@@ -16,10 +16,18 @@ class AdministrativeDocument extends Model
         'type',
         'service',
         'file_path',
+        'original_name',
+        'mime_type',
+        'file_size_bytes',
         'file_size',
         'reference',
         'user_id',
     ];
+
+    protected function casts(): array
+    {
+        return ['file_size_bytes' => 'integer'];
+    }
 
     public function materialRequest()
     {

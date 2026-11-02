@@ -6,20 +6,27 @@ use App\Http\Controllers\Controller;
 use App\Models\AdministrativeDocument;
 use App\Models\Article;
 use App\Models\MaterialRequest;
+use App\Models\RequestDecision;
 use App\Models\RequestItem;
 use App\Models\StockMovement;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MaterialRequestController extends Controller
 {
     /**
      * Liste des demandes (Toutes pour l'admin, personnelles pour le collaborateur)
      */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $query = MaterialRequest::with(['user', 'items.article', 'approver']);
+        $query = MaterialRequest::with(['user', 'items.article', 'approver', 'decisions.user']);
+
+        if (! $request->user()?->isAdmin()) {
+            $query->where('user_id', $request->user()?->id);
+        }
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -45,10 +52,9 @@ class MaterialRequestController extends Controller
     /**
      * Soumission d'une nouvelle demande d'emprunt ou de réquisition par le collaborateur
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
             'type_operation' => 'nullable|in:Emprunt temporaire,Dotation permanente',
             'motif' => 'required|string|max:255',
             'service' => 'required|string',
@@ -59,23 +65,26 @@ class MaterialRequestController extends Controller
             'items' => 'required|array|min:1',
             'items.*.article_id' => 'required|exists:articles,id',
             'items.*.quantity' => 'required|integer|min:1',
+            'save_as_draft' => 'sometimes|boolean',
         ]);
 
-        return DB::transaction(function () use ($validated) {
-            // Générer une référence unique format DEM-2025-XXXXX
+        return DB::transaction(function () use ($request, $validated) {
             $lastId = MaterialRequest::max('id') ?? 0;
-            $reference = 'DEM-2025-'.str_pad($lastId + 1, 5, '0', STR_PAD_LEFT);
+            $reference = 'DEM-'.now()->format('Y').'-'.str_pad($lastId + 1, 5, '0', STR_PAD_LEFT);
+            $isDraft = (bool) ($validated['save_as_draft'] ?? false);
+            $status = $isDraft ? MaterialRequest::STATUS_DRAFT : MaterialRequest::STATUS_PENDING;
 
             $materialRequest = MaterialRequest::create([
                 'reference' => $reference,
-                'user_id' => $validated['user_id'],
+                'user_id' => $request->user()->id,
                 'type_operation' => $validated['type_operation'] ?? 'Emprunt temporaire',
                 'motif' => $validated['motif'],
                 'service' => $validated['service'],
                 'date_needed' => $validated['date_needed'] ?? now()->toDateString(),
                 'date_return' => $validated['date_return'] ?? null,
                 'urgency' => $validated['urgency'] ?? 'Normale',
-                'status' => 'En attente',
+                'status' => $status,
+                'submitted_at' => $isDraft ? null : now(),
                 'notes' => $validated['notes'] ?? null,
             ]);
 
@@ -88,11 +97,16 @@ class MaterialRequestController extends Controller
                 ]);
             }
 
+            $this->recordDecision($materialRequest, $request->user(), 'created', null, $status, $validated['notes'] ?? null);
+            $this->recordActivity($request, 'request.created', $materialRequest, "Demande {$reference} créée.", ['status' => $status]);
+
             $materialRequest->load(['items.article', 'user']);
 
             return response()->json([
                 'success' => true,
-                'message' => "Demande {$reference} enregistrée et transmise au gestionnaire de stock pour approbation.",
+                'message' => $isDraft
+                    ? "Brouillon {$reference} enregistré."
+                    : "Demande {$reference} enregistrée et transmise pour approbation.",
                 'data' => $materialRequest,
             ], 201);
         });
@@ -101,30 +115,34 @@ class MaterialRequestController extends Controller
     /**
      * Détails d'une demande
      */
-    public function show($id)
+    public function show(Request $request, string $id): JsonResponse
     {
-        $request = MaterialRequest::with(['user', 'items.article', 'approver', 'documents'])
+        $materialRequest = MaterialRequest::with(['user', 'items.article', 'approver', 'documents', 'decisions.user'])
             ->where('id', $id)
             ->orWhere('reference', $id)
             ->firstOrFail();
 
+        if (! $request->user()?->isAdmin() && $materialRequest->user_id !== $request->user()?->id) {
+            abort(403, 'Vous ne pouvez consulter que vos propres demandes.');
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $request,
+            'data' => $materialRequest,
         ]);
     }
 
     /**
      * Approbation par le Gestionnaire + Décompte du stock + Génération automatique du Bon de Décharge
      */
-    public function approve(Request $request, $id)
+    public function approve(Request $request, string $id): JsonResponse
     {
         $materialRequest = MaterialRequest::with(['user', 'items.article'])
             ->where('id', $id)
             ->orWhere('reference', $id)
             ->firstOrFail();
 
-        if ($materialRequest->status !== 'En attente') {
+        if ($materialRequest->status !== MaterialRequest::STATUS_PENDING) {
             return response()->json([
                 'success' => false,
                 'message' => 'Seule une demande en attente peut être approuvée.',
@@ -182,7 +200,7 @@ class MaterialRequestController extends Controller
 
             // 2. Mettre à jour le statut de la demande
             $materialRequest->update([
-                'status' => 'Approuvée',
+                'status' => MaterialRequest::STATUS_APPROVED,
                 'approved_by' => $approverId,
                 'approved_at' => now(),
             ]);
@@ -201,6 +219,9 @@ class MaterialRequestController extends Controller
             ]);
         });
 
+        $this->recordDecision($materialRequest, $request->user(), 'approved', MaterialRequest::STATUS_PENDING, MaterialRequest::STATUS_APPROVED);
+        $this->recordActivity($request, 'request.approved', $materialRequest, "Demande {$materialRequest->reference} approuvée.");
+
         $materialRequest->load(['items.article', 'approver', 'documents']);
 
         return response()->json([
@@ -213,7 +234,7 @@ class MaterialRequestController extends Controller
     /**
      * Rejet de la demande avec motif
      */
-    public function reject(Request $request, $id)
+    public function reject(Request $request, string $id): JsonResponse
     {
         $materialRequest = MaterialRequest::where('id', $id)->orWhere('reference', $id)->firstOrFail();
 
@@ -221,7 +242,7 @@ class MaterialRequestController extends Controller
             'reason' => 'required|string|max:255',
         ]);
 
-        if ($materialRequest->status !== 'En attente') {
+        if ($materialRequest->status !== MaterialRequest::STATUS_PENDING) {
             return response()->json([
                 'success' => false,
                 'message' => 'Seule une demande en attente peut être rejetée.',
@@ -229,9 +250,12 @@ class MaterialRequestController extends Controller
         }
 
         $materialRequest->update([
-            'status' => 'Rejetée',
+            'status' => MaterialRequest::STATUS_REJECTED,
             'rejection_reason' => $validated['reason'],
         ]);
+
+        $this->recordDecision($materialRequest, $request->user(), 'rejected', MaterialRequest::STATUS_PENDING, MaterialRequest::STATUS_REJECTED, $validated['reason']);
+        $this->recordActivity($request, 'request.rejected', $materialRequest, "Demande {$materialRequest->reference} rejetée.");
 
         return response()->json([
             'success' => true,
@@ -243,14 +267,14 @@ class MaterialRequestController extends Controller
     /**
      * Clôture / Restitution du matériel prêté (réintégration en stock)
      */
-    public function markReturned(Request $request, $id)
+    public function markReturned(Request $request, string $id): JsonResponse
     {
         $materialRequest = MaterialRequest::with(['items.article'])
             ->where('id', $id)
             ->orWhere('reference', $id)
             ->firstOrFail();
 
-        if ($materialRequest->status !== 'Approuvée') {
+        if (! in_array($materialRequest->status, [MaterialRequest::STATUS_APPROVED, MaterialRequest::STATUS_DELIVERED], true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Seule une demande approuvée peut être restituée.',
@@ -258,6 +282,7 @@ class MaterialRequestController extends Controller
         }
 
         $actorId = $this->resolveActorId($request);
+        $previousStatus = $materialRequest->status;
 
         if ($actorId === null) {
             return response()->json([
@@ -286,14 +311,138 @@ class MaterialRequestController extends Controller
             }
 
             $materialRequest->update([
-                'status' => 'Restituée',
+                'status' => MaterialRequest::STATUS_RETURNED,
             ]);
         });
+
+        $this->recordDecision($materialRequest, $request->user(), 'returned', $previousStatus, MaterialRequest::STATUS_RETURNED);
+        $this->recordActivity($request, 'request.returned', $materialRequest, "Matériel de {$materialRequest->reference} restitué.");
 
         return response()->json([
             'success' => true,
             'message' => 'Matériel restitué avec succès. Les stocks ont été réintégrés.',
             'data' => $materialRequest,
+        ]);
+    }
+
+    public function submit(Request $request, string $id): JsonResponse
+    {
+        $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
+
+        if ($materialRequest->user_id !== $request->user()->id || ! in_array($materialRequest->status, [MaterialRequest::STATUS_DRAFT, MaterialRequest::STATUS_CORRECTION], true)) {
+            return response()->json(['success' => false, 'message' => 'Cette demande ne peut pas être soumise.'], 422);
+        }
+
+        $previousStatus = $materialRequest->status;
+        $materialRequest->update(['status' => MaterialRequest::STATUS_PENDING, 'submitted_at' => now(), 'correction_reason' => null]);
+        $this->recordDecision($materialRequest, $request->user(), 'submitted', $previousStatus, MaterialRequest::STATUS_PENDING);
+        $this->recordActivity($request, 'request.submitted', $materialRequest, "Demande {$materialRequest->reference} soumise.");
+
+        return response()->json(['success' => true, 'message' => 'Demande soumise pour validation.', 'data' => $materialRequest]);
+    }
+
+    public function cancel(Request $request, string $id): JsonResponse
+    {
+        $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
+
+        if ($materialRequest->user_id !== $request->user()->id || ! in_array($materialRequest->status, [MaterialRequest::STATUS_DRAFT, MaterialRequest::STATUS_PENDING, MaterialRequest::STATUS_CORRECTION], true)) {
+            return response()->json(['success' => false, 'message' => 'Cette demande ne peut pas être annulée.'], 422);
+        }
+
+        $previousStatus = $materialRequest->status;
+        $materialRequest->update(['status' => MaterialRequest::STATUS_CANCELLED, 'closed_at' => now()]);
+        $this->recordDecision($materialRequest, $request->user(), 'cancelled', $previousStatus, MaterialRequest::STATUS_CANCELLED);
+        $this->recordActivity($request, 'request.cancelled', $materialRequest, "Demande {$materialRequest->reference} annulée par son auteur.");
+
+        return response()->json(['success' => true, 'message' => 'Votre demande a été annulée.', 'data' => $materialRequest]);
+    }
+
+    public function requestCorrection(Request $request, string $id): JsonResponse
+    {
+        $validated = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
+
+        if ($materialRequest->status !== MaterialRequest::STATUS_PENDING) {
+            return response()->json(['success' => false, 'message' => 'Seule une demande en attente peut être renvoyée pour correction.'], 422);
+        }
+
+        $materialRequest->update(['status' => MaterialRequest::STATUS_CORRECTION, 'correction_reason' => $validated['reason']]);
+        $this->recordDecision($materialRequest, $request->user(), 'correction_requested', MaterialRequest::STATUS_PENDING, MaterialRequest::STATUS_CORRECTION, $validated['reason']);
+        $this->recordActivity($request, 'request.correction_requested', $materialRequest, "Correction demandée pour {$materialRequest->reference}.");
+
+        return response()->json(['success' => true, 'message' => 'La demande a été renvoyée pour correction.', 'data' => $materialRequest]);
+    }
+
+    public function markDelivered(Request $request, string $id): JsonResponse
+    {
+        $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
+
+        if ($materialRequest->status !== MaterialRequest::STATUS_APPROVED) {
+            return response()->json(['success' => false, 'message' => 'Seule une demande approuvée peut être livrée.'], 422);
+        }
+
+        $materialRequest->update(['status' => MaterialRequest::STATUS_DELIVERED, 'delivered_at' => now()]);
+        $this->recordDecision($materialRequest, $request->user(), 'delivered', MaterialRequest::STATUS_APPROVED, MaterialRequest::STATUS_DELIVERED);
+        $this->recordActivity($request, 'request.delivered', $materialRequest, "Demande {$materialRequest->reference} livrée.");
+
+        return response()->json(['success' => true, 'message' => 'Livraison enregistrée.', 'data' => $materialRequest]);
+    }
+
+    public function close(Request $request, string $id): JsonResponse
+    {
+        $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
+
+        if (! in_array($materialRequest->status, [MaterialRequest::STATUS_DELIVERED, MaterialRequest::STATUS_RETURNED], true)) {
+            return response()->json(['success' => false, 'message' => 'La demande doit être livrée ou restituée avant sa clôture.'], 422);
+        }
+
+        $previousStatus = $materialRequest->status;
+        $materialRequest->update(['status' => MaterialRequest::STATUS_CLOSED, 'closed_at' => now()]);
+        $this->recordDecision($materialRequest, $request->user(), 'closed', $previousStatus, MaterialRequest::STATUS_CLOSED);
+        $this->recordActivity($request, 'request.closed', $materialRequest, "Demande {$materialRequest->reference} clôturée.");
+
+        return response()->json(['success' => true, 'message' => 'Demande clôturée.', 'data' => $materialRequest]);
+    }
+
+    public function export(): StreamedResponse
+    {
+        $requests = MaterialRequest::query()->with('user')->latest()->get();
+
+        return response()->streamDownload(function () use ($requests): void {
+            $output = fopen('php://output', 'wb');
+            fputcsv($output, ['Référence', 'Demandeur', 'Service', 'Type', 'Urgence', 'Statut', 'Créée le'], ';');
+
+            foreach ($requests as $materialRequest) {
+                fputcsv($output, [
+                    $materialRequest->reference,
+                    $materialRequest->user?->name,
+                    $materialRequest->service,
+                    $materialRequest->type_operation,
+                    $materialRequest->urgency,
+                    $materialRequest->status,
+                    $materialRequest->created_at?->format('d/m/Y H:i'),
+                ], ';');
+            }
+
+            fclose($output);
+        }, 'demandes-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    private function recordDecision(
+        MaterialRequest $materialRequest,
+        ?User $user,
+        string $action,
+        ?string $statusFrom,
+        string $statusTo,
+        ?string $comment = null,
+    ): void {
+        RequestDecision::create([
+            'material_request_id' => $materialRequest->id,
+            'user_id' => $user?->id,
+            'action' => $action,
+            'status_from' => $statusFrom,
+            'status_to' => $statusTo,
+            'comment' => $comment,
         ]);
     }
 }
