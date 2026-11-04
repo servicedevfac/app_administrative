@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\AdministrativeDocument;
 use App\Models\Article;
+use App\Models\Expense;
+use App\Models\InventorySession;
 use App\Models\MaterialRequest;
 use App\Models\RequestDecision;
 use App\Models\RequestItem;
@@ -67,6 +69,44 @@ class ExampleTest extends TestCase
             'code' => 'ART-009',
             'name' => 'Nouvel article',
             'location' => 'Rayon B3',
+        ]);
+    }
+
+    public function test_administrator_can_update_an_article_and_its_stock_state(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $article = Article::create([
+            'code' => 'ART-010',
+            'name' => 'Ancienne désignation',
+            'category' => 'Fournitures',
+            'unit' => 'Pièce',
+            'quantity' => 8,
+            'threshold' => 2,
+            'status' => Article::STATUS_AVAILABLE,
+            'is_available' => true,
+            'created_by' => $admin->id,
+        ]);
+
+        $response = $this->withHeaders($this->authorizationHeaders($admin))->putJson("/api/articles/{$article->id}", [
+            'name' => 'Nouvelle désignation',
+            'category' => 'Fournitures',
+            'unit' => 'Pièce',
+            'quantity' => 1,
+            'threshold' => 3,
+            'location' => 'Rayon C2',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.name', 'Nouvelle désignation')
+            ->assertJsonPath('data.status', Article::STATUS_LOW);
+        $this->assertDatabaseHas('articles', [
+            'id' => $article->id,
+            'name' => 'Nouvelle désignation',
+            'quantity' => 1,
+            'threshold' => 3,
+            'status' => Article::STATUS_LOW,
+            'location' => 'Rayon C2',
         ]);
     }
 
@@ -317,13 +357,80 @@ class ExampleTest extends TestCase
             ->putJson("/api/requests/{$requestId}/request-correction", ['reason' => 'Préciser le motif.'])
             ->assertOk();
         $this->withHeaders($this->authorizationHeaders($collaborator))
-            ->putJson("/api/requests/{$requestId}/cancel")
+            ->putJson("/api/requests/{$requestId}/cancel", ['reason' => 'Besoin annulé'])
             ->assertOk();
 
         $this->assertSame(4, RequestDecision::query()->where('material_request_id', $requestId)->count());
         $this->assertDatabaseHas('material_requests', [
             'id' => $requestId,
             'status' => MaterialRequest::STATUS_CANCELLED,
+        ]);
+    }
+
+    public function test_requester_can_modify_their_submitted_request(): void
+    {
+        $requester = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $otherUser = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $articleA = Article::create([
+            'code' => 'ART-MOD-A',
+            'name' => 'Clavier Standard',
+            'category' => 'Informatique',
+            'unit' => 'Pièce',
+            'quantity' => 10,
+            'threshold' => 2,
+            'status' => Article::STATUS_AVAILABLE,
+            'is_available' => true,
+            'created_by' => $admin->id,
+        ]);
+        $articleB = Article::create([
+            'code' => 'ART-MOD-B',
+            'name' => 'Souris Ergonomique',
+            'category' => 'Informatique',
+            'unit' => 'Pièce',
+            'quantity' => 10,
+            'threshold' => 2,
+            'status' => Article::STATUS_AVAILABLE,
+            'is_available' => true,
+            'created_by' => $admin->id,
+        ]);
+
+        $created = $this->withHeaders($this->authorizationHeaders($requester))->postJson('/api/requests', [
+            'motif' => 'Besoin initial',
+            'service' => 'Finance',
+            'urgency' => 'Normale',
+            'items' => [['article_id' => $articleA->id, 'quantity' => 2]],
+        ])->assertCreated();
+
+        $requestId = $created->json('data.id');
+
+        // Another user cannot modify it
+        $this->withHeaders($this->authorizationHeaders($otherUser))
+            ->putJson("/api/requests/{$requestId}", [
+                'motif' => 'Piratage',
+            ])->assertStatus(403);
+
+        // The requester CAN modify their submitted request
+        $this->withHeaders($this->authorizationHeaders($requester))
+            ->putJson("/api/requests/{$requestId}", [
+                'motif' => 'Besoin révisé et urgent',
+                'urgency' => 'Urgente',
+                'service' => 'Direction Financière',
+                'items' => [['article_id' => $articleB->id, 'quantity' => 5]],
+            ])->assertOk();
+
+        $this->assertDatabaseHas('material_requests', [
+            'id' => $requestId,
+            'motif' => 'Besoin révisé et urgent',
+            'urgency' => 'Urgente',
+            'service' => 'Direction Financière',
+        ]);
+
+        $this->assertDatabaseHas('request_items', [
+            'material_request_id' => $requestId,
+            'article_id' => $articleB->id,
+            'quantity_requested' => 5,
         ]);
     }
 
@@ -335,5 +442,77 @@ class ExampleTest extends TestCase
             ->get('/api/requests-export')
             ->assertOk()
             ->assertDownload();
+    }
+
+    public function test_manager_can_approve_a_request_and_stock_is_traced(): void
+    {
+        $manager = User::factory()->create(['role' => User::ROLE_MANAGER]);
+        $employee = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $article = Article::create([
+            'code' => 'ART-020', 'name' => 'Ramette A4', 'category' => 'Papeterie', 'unit' => 'Rame',
+            'quantity' => 10, 'threshold' => 2, 'status' => Article::STATUS_AVAILABLE, 'is_available' => true,
+        ]);
+        $materialRequest = MaterialRequest::create([
+            'reference' => 'DEM-2026-00020', 'user_id' => $employee->id, 'motif' => 'Réunion',
+            'service' => 'Direction', 'status' => MaterialRequest::STATUS_PENDING,
+        ]);
+        RequestItem::create(['material_request_id' => $materialRequest->id, 'article_id' => $article->id, 'quantity_requested' => 3]);
+
+        $this->withHeaders($this->authorizationHeaders($manager))
+            ->putJson("/api/requests/{$materialRequest->id}/approve")
+            ->assertOk()->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 7]);
+        $this->assertDatabaseHas('stock_movements', ['material_request_id' => $materialRequest->id, 'quantity' => 3]);
+    }
+
+    public function test_expense_over_authorized_amount_requires_new_validation(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $employee = User::factory()->create();
+        $materialRequest = MaterialRequest::create([
+            'reference' => 'DEM-2026-00021', 'user_id' => $employee->id, 'motif' => 'Entretien',
+            'service' => 'Logistique', 'status' => MaterialRequest::STATUS_APPROVED,
+        ]);
+
+        $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/expenses', [
+            'material_request_id' => $materialRequest->id,
+            'authorized_amount' => 100000,
+            'committed_amount' => 125000,
+            'disbursed_amount' => 0,
+        ])->assertCreated()->assertJsonPath('data.status', 'Nouvelle validation requise');
+
+        $expense = Expense::firstOrFail();
+        $this->assertTrue($expense->requires_reapproval);
+    }
+
+    public function test_validated_inventory_adjusts_stock_with_a_traced_movement(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $article = Article::create([
+            'code' => 'ART-021', 'name' => 'Cartouche', 'category' => 'Informatique', 'unit' => 'Pièce',
+            'quantity' => 8, 'threshold' => 2, 'status' => Article::STATUS_AVAILABLE, 'is_available' => true,
+        ]);
+        $headers = $this->authorizationHeaders($admin);
+        $response = $this->withHeaders($headers)->postJson('/api/inventories', [
+            'scope' => 'Partiel', 'inventory_date' => '2026-11-04',
+            'items' => [['article_id' => $article->id, 'physical_quantity' => 6, 'justification' => 'Deux unités endommagées']],
+        ])->assertCreated();
+        $inventoryId = $response->json('data.id');
+
+        $this->withHeaders($headers)->putJson("/api/inventories/{$inventoryId}/validate")
+            ->assertOk()->assertJsonPath('data.status', 'Validé');
+
+        $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 6]);
+        $this->assertDatabaseHas('stock_movements', ['article_id' => $article->id, 'source' => StockMovement::SOURCE_INVENTORY_ADJUSTMENT, 'quantity' => 2]);
+        $this->assertSame('Validé', InventorySession::findOrFail($inventoryId)->status);
+    }
+
+    public function test_deactivated_user_cannot_log_in(): void
+    {
+        $user = User::factory()->create(['password' => 'secret123', 'is_active' => false]);
+
+        $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'secret123'])
+            ->assertForbidden()->assertJsonPath('success', false);
     }
 }

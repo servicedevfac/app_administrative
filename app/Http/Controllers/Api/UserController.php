@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
@@ -18,7 +20,7 @@ class UserController extends Controller
         $query = User::query();
 
         if ($request->filled('role')) {
-            $query->where('role', $request->role);
+            $query->where('role', User::normalizeRole($request->string('role')->toString()));
         }
 
         if ($request->filled('service')) {
@@ -27,7 +29,7 @@ class UserController extends Controller
 
         if ($request->filled('search')) {
             $search = $request->search;
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search): void {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%")
                     ->orWhere('service', 'like', "%{$search}%")
@@ -41,6 +43,7 @@ class UserController extends Controller
             'success' => true,
             'count' => $users->count(),
             'data' => $users,
+            'available_permissions' => User::ALL_PERMISSIONS,
         ]);
     }
 
@@ -53,29 +56,48 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:6',
-            'role' => 'required|string|in:admin,collaborator,manager,Administrateur,Collaborateur,Responsable',
+            'role' => 'required|string|in:admin,collaborator,manager,Administrateur,Collaborateur,Employé,Responsable',
             'service' => 'required|string|max:255',
-            'matricule' => 'nullable|string|max:100',
+            'phone' => 'nullable|string|max:50',
+            'office_location' => 'nullable|string|max:255',
+            'is_active' => 'sometimes|boolean',
+            'permissions' => 'nullable|array',
+            'permissions.*' => ['string', Rule::in(User::ALL_PERMISSIONS)],
         ]);
 
         $role = User::normalizeRole($validated['role']);
+        $permissions = isset($validated['permissions'])
+            ? array_values(array_unique($validated['permissions']))
+            : User::defaultPermissionsForRole($role);
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $role,
+            'permissions' => $permissions,
             'service' => $validated['service'],
-            'matricule' => $validated['matricule'] ?? ('EMP-2025-'.rand(100, 999)),
+            'phone' => $validated['phone'] ?? null,
+            'office_location' => $validated['office_location'] ?? null,
+            'matricule' => null,
             'avatar' => User::defaultAvatar($role),
+            'is_active' => $validated['is_active'] ?? true,
         ]);
 
-        $this->recordActivity($request, 'user.created', $user, "Utilisateur {$user->name} créé.");
+        $user->update([
+            'matricule' => 'EMP-'.now()->format('Y').'-'.str_pad((string) $user->id, 5, '0', STR_PAD_LEFT),
+        ]);
+
+        $this->recordActivity($request, 'user.created', $user, "Utilisateur {$user->name} ({$user->matricule}) créé.", [
+            'role' => $role,
+            'service' => $user->service,
+            'permissions' => $permissions,
+        ]);
 
         return response()->json([
             'success' => true,
             'message' => "Utilisateur \"{$user->name}\" créé avec succès.",
-            'data' => $user,
+            'data' => $user->fresh(),
         ], 201);
     }
 
@@ -98,6 +120,7 @@ class UserController extends Controller
     public function update(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
+        $before = $user->only(['name', 'email', 'role', 'service', 'phone', 'office_location', 'is_active', 'permissions']);
 
         $validated = $request->validate([
             'name' => 'sometimes|required|string|max:255',
@@ -105,7 +128,11 @@ class UserController extends Controller
             'password' => 'nullable|string|min:6',
             'role' => 'sometimes|required|string',
             'service' => 'sometimes|required|string|max:255',
-            'matricule' => 'nullable|string|max:100',
+            'phone' => 'nullable|string|max:50',
+            'office_location' => 'nullable|string|max:255',
+            'is_active' => 'sometimes|boolean',
+            'permissions' => 'nullable|array',
+            'permissions.*' => ['string', Rule::in(User::ALL_PERMISSIONS)],
         ]);
 
         if (! empty($validated['password'])) {
@@ -115,22 +142,111 @@ class UserController extends Controller
         }
 
         if (isset($validated['role'])) {
-            $validated['role'] = User::normalizeRole($validated['role']);
-            $validated['avatar'] = User::defaultAvatar($validated['role']);
+            $newRole = User::normalizeRole($validated['role']);
+            if ($user->isAdmin() && $newRole !== User::ROLE_ADMIN && User::where('role', User::ROLE_ADMIN)->count() <= 1) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Impossible de retirer le rôle Administrateur au dernier administrateur du système.',
+                ], 422);
+            }
+            $validated['role'] = $newRole;
+            $validated['avatar'] = User::defaultAvatar($newRole);
+            if (! array_key_exists('permissions', $validated) && $newRole !== $user->role) {
+                $validated['permissions'] = User::defaultPermissionsForRole($newRole);
+            }
         }
 
-        $user->update($validated);
-        $this->recordActivity($request, 'user.updated', $user, "Utilisateur {$user->name} mis à jour.");
+        if (array_key_exists('is_active', $validated)) {
+            if (! $validated['is_active'] && $request->user()?->is($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Vous ne pouvez pas désactiver votre propre compte.',
+                ], 403);
+            }
+            $user->deactivated_at = $validated['is_active'] ? null : now();
+            if (! $validated['is_active']) {
+                $user->api_token_hash = null;
+            }
+        }
+
+        $user->fill($validated);
+        $user->save();
+
+        $this->recordActivity($request, 'user.updated', $user, "Utilisateur {$user->name} mis à jour.", [
+            'before' => $before,
+            'after' => $user->only(['name', 'email', 'role', 'service', 'phone', 'office_location', 'is_active', 'permissions']),
+        ]);
 
         return response()->json([
             'success' => true,
             'message' => "Utilisateur \"{$user->name}\" mis à jour.",
-            'data' => $user,
+            'data' => $user->fresh(),
         ]);
     }
 
     /**
-     * Suppression d'un utilisateur (Sécurisé)
+     * Réinitialisation du mot de passe d'un utilisateur par l'Administrateur
+     */
+    public function resetPassword(Request $request, string $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        $validated = $request->validate([
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $user->forceFill([
+            'password' => Hash::make($validated['password']),
+            'api_token_hash' => $request->user()?->is($user) ? $user->api_token_hash : null,
+        ])->save();
+
+        $this->recordActivity($request, 'user.password_reset', $user, "Mot de passe réinitialisé pour {$user->name} par {$request->user()?->name}.");
+        $this->sendSystemNotification(
+            $user->id,
+            'user.password_reset',
+            'Mot de passe réinitialisé',
+            'Votre mot de passe a été réinitialisé par un administrateur. Pensez à le modifier depuis votre profil.',
+            '#profile',
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => "Mot de passe de \"{$user->name}\" réinitialisé avec succès.",
+        ]);
+    }
+
+    /**
+     * Historique global des connexions des utilisateurs
+     */
+    public function loginHistory(Request $request): JsonResponse
+    {
+        $query = ActivityLog::query()
+            ->with('user:id,name,email,role,service,matricule')
+            ->whereIn('action', ['auth.login', 'auth.logout', 'auth.login_failed', 'auth.login_blocked', 'auth.password_changed', 'user.password_reset']);
+
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->integer('user_id'));
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->string('search')->toString();
+            $query->where(function ($sub) use ($search): void {
+                $sub->where('description', 'like', "%{$search}%")
+                    ->orWhere('ip_address', 'like', "%{$search}%")
+                    ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%")->orWhere('email', 'like', "%{$search}%"));
+            });
+        }
+
+        $logs = $query->latest()->limit(150)->get();
+
+        return response()->json([
+            'success' => true,
+            'count' => $logs->count(),
+            'data' => $logs,
+        ]);
+    }
+
+    /**
+     * Suppression d'un utilisateur (Sécurisé - empêche la suppression si opérations historisées)
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
@@ -143,14 +259,18 @@ class UserController extends Controller
             ], 403);
         }
 
-        if ($user->role === User::ROLE_ADMIN) {
-            $adminCount = User::where('role', User::ROLE_ADMIN)->count();
-            if ($adminCount <= 1) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Action interdite : impossible de supprimer le dernier compte Administrateur du système.',
-                ], 403);
-            }
+        if ($user->role === User::ROLE_ADMIN && User::where('role', User::ROLE_ADMIN)->count() <= 1) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Action interdite : impossible de supprimer le dernier compte Administrateur du système.',
+            ], 403);
+        }
+
+        if ($user->materialRequests()->exists() || $user->stockMovements()->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cet utilisateur est rattaché à des opérations historisées. Désactivez son compte pour préserver la traçabilité.',
+            ], 422);
         }
 
         $userName = $user->name;
@@ -160,6 +280,32 @@ class UserController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Utilisateur \"{$userName}\" supprimé avec succès.",
+        ]);
+    }
+
+    public function toggleActive(Request $request, string $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        if ($request->user()?->is($user)) {
+            return response()->json(['success' => false, 'message' => 'Vous ne pouvez pas désactiver votre propre compte.'], 403);
+        }
+        $validated = $request->validate(['is_active' => ['required', 'boolean']]);
+        $user->forceFill([
+            'is_active' => $validated['is_active'],
+            'deactivated_at' => $validated['is_active'] ? null : now(),
+            'api_token_hash' => $validated['is_active'] ? $user->api_token_hash : null,
+        ])->save();
+        $this->recordActivity(
+            $request,
+            $validated['is_active'] ? 'user.activated' : 'user.deactivated',
+            $user,
+            $validated['is_active'] ? "Compte {$user->name} activé." : "Compte {$user->name} désactivé (session révoquée).",
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $validated['is_active'] ? 'Compte activé.' : 'Compte désactivé immédiatement.',
+            'data' => $user->fresh(),
         ]);
     }
 }

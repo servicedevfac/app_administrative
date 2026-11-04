@@ -57,9 +57,8 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'category' => 'required|string',
-            'type' => 'required|in:PDF,Word,Excel',
+            'type' => 'required|in:PDF,Word,Excel,Image',
             'service' => 'required|string',
-            'reference' => 'nullable|string',
             'file' => 'required|file|mimes:pdf,doc,docx,xls,xlsx,jpg,jpeg,png|max:10240',
         ]);
 
@@ -73,13 +72,16 @@ class DocumentController extends Controller
             'category' => $validated['category'],
             'type' => $validated['type'],
             'service' => $validated['service'],
-            'reference' => $validated['reference'] ?? null,
             'file_path' => $storedPath,
             'original_name' => $file->getClientOriginalName(),
             'mime_type' => $file->getMimeType(),
             'file_size_bytes' => $fileSize,
             'file_size' => $this->formatFileSize($fileSize),
             'user_id' => $this->resolveActorId($request),
+        ]);
+
+        $doc->update([
+            'reference' => 'DOC-'.now()->format('Y').'-'.str_pad((string) $doc->id, 5, '0', STR_PAD_LEFT),
         ]);
 
         $this->recordActivity($request, 'document.uploaded', $doc, "Document {$doc->title} déposé.");
@@ -101,6 +103,31 @@ class DocumentController extends Controller
             $document->file_path,
             $document->original_name ?? Str::slug($document->title).'.'.strtolower($document->type),
         );
+    }
+
+    public function destroy(Request $request, AdministrativeDocument $document): JsonResponse
+    {
+        if ($document->material_request_id !== null && ! $request->user()?->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Seul un administrateur peut supprimer un document lié à une demande validée.',
+            ], 403);
+        }
+
+        if ($document->file_path && Storage::disk('local')->exists($document->file_path)) {
+            Storage::disk('local')->delete($document->file_path);
+        }
+
+        $title = $document->title;
+        $ref = $document->reference;
+        $document->delete();
+
+        $this->recordActivity($request, 'document.deleted', null, "Document {$ref} ({$title}) supprimé.");
+
+        return response()->json([
+            'success' => true,
+            'message' => "Document \"{$title}\" supprimé.",
+        ]);
     }
 
     private function formatFileSize(int $bytes): string

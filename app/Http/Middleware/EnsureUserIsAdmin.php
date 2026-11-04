@@ -11,7 +11,7 @@ class EnsureUserIsAdmin
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! $request->user()?->isAdmin()) {
+        if (! $request->user()?->isAdmin() || ! $request->user()?->is_active) {
             return new JsonResponse([
                 'success' => false,
                 'message' => 'Cette action est réservée aux administrateurs.',

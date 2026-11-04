@@ -1,17 +1,132 @@
 /**
- * GESTION+ : Logique Applicative & Interactivité Complète
- * Maquette interactive, intuitive et fidèle au standard SaaS B2B
+ * GESTION+ : Logique Applicative Complète (Modules 1 à 10)
+ * Gestion des utilisateurs, demandes, stocks, inventaires, patrimoine, parc auto,
+ * dépenses, documents administratifs, reporting, audit, sauvegardes & paramétrage.
  */
 
-// État global de l'application (Connecté à MySQL & Données Réelles)
 const AppState = {
   currentView: 'dashboard',
-  currentRole: 'admin', // 'collaborator' ou 'admin'
+  currentRole: 'collaborator', // 'collaborator' | 'admin' (accès opérationnel)
+  isSuperAdmin: false,         // true uniquement pour role === 'admin'
+  canManageOps: false,         // true pour admin, manager ou délégataire actif
   currentUser: null,
   selectedArticlesForRequest: {},
+  editingRequestRef: null,
+  selectedRequestRef: null,
+  currentArticles: [],
+  currentRequests: [],
+  currentMovements: [],
+  currentDocuments: [],
+  currentUsers: [],
+  currentAssignees: [],
+  currentAssets: [],
+  currentVehicles: [],
+  currentExpenses: [],
+  currentInventories: [],
+  currentSavedReports: [],
+  lastReportPayload: null,
+  catalogRefs: {
+    departments: [],
+    locations: [],
+    suppliers: [],
+    request_categories: [],
+    article_categories: [],
+    units: [],
+    settings: {}
+  },
   currentStep: 1,
   activeDetailTab: 'info'
 };
+
+const PERMISSION_CATALOG = [
+  { key: 'requests.create', label: 'Créer des demandes' },
+  { key: 'requests.verify', label: 'Vérifier les demandes' },
+  { key: 'requests.validate', label: 'Valider / Rejeter demandes' },
+  { key: 'requests.assign', label: 'Affecter les demandes' },
+  { key: 'requests.execute', label: 'Exécuter / Livrer demandes' },
+  { key: 'stock.view', label: 'Consulter le stock' },
+  { key: 'stock.manage', label: 'Gérer articles & mouvements' },
+  { key: 'inventory.manage', label: 'Saisir inventaires physiques' },
+  { key: 'inventory.validate', label: 'Valider écarts inventaire' },
+  { key: 'assets.manage', label: 'Gérer le patrimoine' },
+  { key: 'vehicles.manage', label: 'Gérer le parc automobile' },
+  { key: 'expenses.manage', label: 'Enregistrer les dépenses' },
+  { key: 'expenses.validate', label: 'Contrôler & valider dépenses' },
+  { key: 'reports.view', label: 'Tableaux de bord & rapports' },
+  { key: 'documents.manage', label: 'Gérer documents admin.' },
+  { key: 'users.manage', label: 'Gérer utilisateurs & rôles' },
+  { key: 'settings.manage', label: 'Paramétrage général' },
+  { key: 'audit.view', label: 'Consulter journal d’audit' },
+  { key: 'backups.manage', label: 'Sauvegarde & restauration' }
+];
+
+const DEFAULT_ROLE_PERMISSIONS = {
+  Administrateur: PERMISSION_CATALOG.map(p => p.key),
+  admin: PERMISSION_CATALOG.map(p => p.key),
+  Responsable: [
+    'requests.create', 'requests.verify', 'requests.validate', 'requests.assign', 'requests.execute',
+    'stock.view', 'stock.manage', 'inventory.manage', 'inventory.validate',
+    'assets.manage', 'vehicles.manage', 'expenses.manage', 'expenses.validate',
+    'reports.view', 'documents.manage'
+  ],
+  manager: [
+    'requests.create', 'requests.verify', 'requests.validate', 'requests.assign', 'requests.execute',
+    'stock.view', 'stock.manage', 'inventory.manage', 'inventory.validate',
+    'assets.manage', 'vehicles.manage', 'expenses.manage', 'expenses.validate',
+    'reports.view', 'documents.manage'
+  ],
+  Collaborateur: ['requests.create', 'stock.view'],
+  collaborator: ['requests.create', 'stock.view']
+};
+
+const PENDING_REQUEST_STATUSES = [
+  'En attente',
+  'Soumise',
+  'En attente de vérification',
+  'En attente de validation'
+];
+
+const AUTHORIZED_REQUEST_STATUSES = [
+  'Validée',
+  'Approuvée',
+  'En cours d\'exécution',
+  'En cours d’exécution',
+  'En attente d\'approvisionnement',
+  'Exécutée',
+  'Livrée',
+  'En attente de justification',
+  'Restituée',
+  'Clôturée'
+];
+
+function escHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatCurrency(value, currencyLabel = null) {
+  const unit = currencyLabel || (AppState.catalogRefs?.settings?.currency === 'EUR' ? '€' : (AppState.catalogRefs?.settings?.currency === 'USD' ? '$' : 'FCFA'));
+  return `${Number(value || 0).toLocaleString('fr-FR')} ${unit}`;
+}
+
+function formatDateShort(value, fallback = '—') {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function formatDateTime(value, fallback = '—') {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, options = {}) => {
@@ -23,7 +138,9 @@ window.fetch = (input, options = {}) => {
 
   const headers = new Headers(options.headers || (typeof input !== 'string' ? input.headers : undefined));
   headers.set('Authorization', `Bearer ${token}`);
-  headers.set('Accept', 'application/json');
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
 
   return nativeFetch(input, { ...options, headers });
 };
@@ -42,12 +159,13 @@ window.downloadAuthenticatedFile = async (url, fallbackName = 'export.csv') => {
     link.click();
     URL.revokeObjectURL(blobUrl);
   } catch (error) {
-    showToast('L’export est indisponible ou vous n’avez pas les droits nécessaires.', 'danger');
+    showToast('Le téléchargement est indisponible ou vous n’avez pas les droits nécessaires.', 'danger');
   }
 };
 
 // Initialisation au chargement du DOM
 document.addEventListener('DOMContentLoaded', () => {
+  setupPasswordToggles();
   setupNavigation();
   setupRoleSwitcher();
   setupStepper();
@@ -56,115 +174,196 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModalsAndActions();
   setupSearchGlobal();
   setupAuthAndSettingsHandlers();
+  setupOperationsCenter();
 
-  // Restaurer l'utilisateur depuis la session
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const fpDocDate = document.getElementById('fpDocDate');
+  if (fpDocDate && !fpDocDate.value) fpDocDate.value = todayIso;
+  const invDate = document.getElementById('inventoryDateInput');
+  if (invDate && !invDate.value) invDate.value = todayIso;
+  const delStart = document.getElementById('delegationStartDate');
+  if (delStart && !delStart.value) delStart.value = todayIso;
+
   const storedUser = sessionStorage.getItem('gestion_user');
   const storedToken = sessionStorage.getItem('gestion_token');
   const hasAuthenticatedSession = Boolean(storedUser && storedToken);
   if (hasAuthenticatedSession) {
     try {
       applyUser(JSON.parse(storedUser));
-    } catch (e) {}
+    } catch (e) {
+      sessionStorage.removeItem('gestion_user');
+      sessionStorage.removeItem('gestion_token');
+      navigateToView('login', false);
+    }
   } else {
-    navigateToView('login');
+    navigateToView('login', false);
   }
 
-  // Restaurer la vue uniquement pour une session authentifiée
-  if (hasAuthenticatedSession) handleRouteHash();
+  if (hasAuthenticatedSession) {
+    handleRouteHash();
+  }
   window.addEventListener('hashchange', handleRouteHash);
 
-  // Vérifier la connexion avec le Backend Laravel & MySQL
   if (typeof BackendApi !== 'undefined') {
     BackendApi.checkHealth();
   }
 });
 
 /* ==========================================================================
-   1. Gestion de la Navigation & du Hash Routing
+   0. Bascule d'affichage des mots de passe (icône œil sur tous les champs)
    ========================================================================== */
+function setupPasswordToggles() {
+  document.addEventListener('click', (event) => {
+    const toggleButton = event.target.closest('[data-password-toggle]');
+    if (!toggleButton) return;
 
+    const targetId = toggleButton.getAttribute('data-password-toggle');
+    const passwordInput = targetId ? document.getElementById(targetId) : toggleButton.parentElement?.querySelector('input');
+    if (!passwordInput) return;
+
+    const shouldShowPassword = passwordInput.type === 'password';
+    passwordInput.type = shouldShowPassword ? 'text' : 'password';
+
+    const label = shouldShowPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe';
+    const icon = toggleButton.querySelector('i');
+    toggleButton.setAttribute('aria-label', label);
+    toggleButton.setAttribute('aria-pressed', String(shouldShowPassword));
+    toggleButton.setAttribute('title', label);
+    if (icon) {
+      icon.classList.toggle('bi-eye', !shouldShowPassword);
+      icon.classList.toggle('bi-eye-slash', shouldShowPassword);
+    }
+  });
+}
+
+/* ==========================================================================
+   1. Gestion de la Navigation, Session & Visibilité par Rôle
+   ========================================================================== */
 function applyUser(user) {
   if (!user) return;
   AppState.currentUser = user;
-  const role = (user.role === 'admin' || user.role === 'Administrateur') ? 'admin' : 'collaborator';
-  AppState.currentRole = role;
+
+  const normalizedRole = String(user.role || '').toLowerCase();
+  const isSuperAdmin = normalizedRole === 'admin' || normalizedRole === 'administrateur';
+  const isManager = normalizedRole === 'manager' || normalizedRole === 'responsable';
+  const hasDelegation = Boolean(user.has_active_delegation);
+  const canManageOps = isSuperAdmin || isManager || hasDelegation;
+
+  AppState.isSuperAdmin = isSuperAdmin;
+  AppState.canManageOps = canManageOps;
+  AppState.currentRole = canManageOps ? 'admin' : 'collaborator';
+
+  const roleDisplay = isSuperAdmin
+    ? 'Administrateur'
+    : (isManager ? 'Responsable' : (hasDelegation ? 'Collaborateur (Délégué)' : 'Collaborateur'));
+
+  const initials = (user.name || 'GP').split(' ').filter(Boolean).map(n => n[0]).join('').substring(0, 2).toUpperCase();
 
   const nameEl = document.getElementById('topbarUserName');
   const roleEl = document.getElementById('topbarUserRole');
   const avatarEl = document.getElementById('topbarUserAvatar');
   const activeRoleText = document.getElementById('topbarActiveRoleText');
+  const dropdownTitle = document.getElementById('topbarDropdownTitle');
+  const dropdownService = document.getElementById('topbarDropdownService');
 
-  const initials = (user.name || 'AD').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
   if (nameEl) nameEl.textContent = user.name;
-  if (roleEl) roleEl.textContent = role === 'admin' ? 'Administrateur' : (user.service || 'Collaborateur');
+  if (roleEl) roleEl.textContent = isSuperAdmin || isManager ? roleDisplay : (user.service || roleDisplay);
   if (avatarEl) avatarEl.textContent = initials;
-  if (activeRoleText) activeRoleText.textContent = `Profil : ${role === 'admin' ? 'Administrateur' : 'Collaborateur'}`;
+  if (activeRoleText) activeRoleText.textContent = `Profil : ${roleDisplay}`;
+  if (dropdownTitle) dropdownTitle.textContent = `Compte ${roleDisplay}`;
+  if (dropdownService) dropdownService.textContent = user.service || 'Direction Générale';
 
-  // Dashboards
   const collabDashboard = document.getElementById('collaboratorDashboardView');
   const adminDashboard = document.getElementById('adminDashboardView');
   if (collabDashboard && adminDashboard) {
-    if (role === 'admin') {
-      collabDashboard.style.display = 'none';
-      adminDashboard.style.display = 'block';
-    } else {
-      collabDashboard.style.display = 'block';
-      adminDashboard.style.display = 'none';
-    }
+    collabDashboard.style.display = canManageOps ? 'none' : 'block';
+    adminDashboard.style.display = canManageOps ? 'block' : 'none';
   }
 
-  // Greetings
   const collabNameEl = document.getElementById('collabGreetingName');
   if (collabNameEl) collabNameEl.textContent = user.name;
   const collabSubEl = document.getElementById('collabGreetingSub');
-  if (collabSubEl) collabSubEl.textContent = `Espace Collaborateur • Département ${user.service || 'Général'}`;
+  if (collabSubEl) collabSubEl.textContent = `Espace Collaborateur • Service ${user.service || 'Général'}`;
 
-  // Stepper demandeur name
   const reqDemandeurInput = document.getElementById('reqDemandeurName');
   if (reqDemandeurInput) {
     reqDemandeurInput.value = `${user.name} (${user.matricule || user.service || 'Demandeur'})`;
   }
+  const reqServiceSelect = document.getElementById('selectRequestService');
+  if (reqServiceSelect && user.service && [...reqServiceSelect.options].some(o => o.value === user.service)) {
+    reqServiceSelect.value = user.service;
+  }
 
-  // Profile view
+  // Profil
   const profName = document.getElementById('profileCardName');
   const profEmail = document.getElementById('profileCardEmail');
   const profInName = document.getElementById('profileInputName');
   const profInEmail = document.getElementById('profileInputEmail');
+  const profInPhone = document.getElementById('profileInputPhone');
+  const profInOffice = document.getElementById('profileInputOffice');
   const profRole = document.getElementById('profileCardRole');
   const profService = document.getElementById('profileCardService');
   const profMatricule = document.getElementById('profileCardMatricule');
   const profAvatar = document.getElementById('profileCardAvatar');
+
   if (profName) profName.textContent = user.name;
   if (profEmail) profEmail.textContent = user.email;
-  if (profInName) profInName.value = user.name;
-  if (profInEmail) profInEmail.value = user.email;
-  if (profRole) profRole.textContent = role === 'admin' ? 'Administrateur / Gestionnaire' : 'Collaborateur';
+  if (profInName) profInName.value = user.name || '';
+  if (profInEmail) profInEmail.value = user.email || '';
+  if (profInPhone) profInPhone.value = user.phone || '';
+  if (profInOffice) profInOffice.value = user.office_location || '';
+  if (profRole) profRole.textContent = roleDisplay;
   if (profService) profService.textContent = user.service ? `Service ${user.service}` : 'Direction Générale';
-  if (profMatricule) profMatricule.textContent = user.matricule || `EMP-${user.id || 1}`;
+  if (profMatricule) profMatricule.textContent = user.matricule || 'Auto';
   if (profAvatar && user.avatar) profAvatar.src = user.avatar;
 
-  applyRoleVisibility(role);
+  applyRoleVisibility(AppState.currentRole);
+}
+
+function applyRoleVisibility(role = AppState.currentRole) {
+  const isOps = role === 'admin';
+  const isSuper = Boolean(AppState.isSuperAdmin);
+
+  document.body.classList.remove('role-collaborator', 'role-admin');
+  document.body.classList.add(`role-${role}`);
+
+  document.querySelectorAll('.admin-only-feature').forEach(el => {
+    el.style.setProperty('display', isOps ? '' : 'none', 'important');
+  });
+
+  document.querySelectorAll('.superadmin-only-feature').forEach(el => {
+    el.style.setProperty('display', isSuper ? '' : 'none', 'important');
+  });
+
+  document.querySelectorAll('.collaborator-only-feature').forEach(el => {
+    el.style.setProperty('display', !isOps ? '' : 'none', 'important');
+  });
 }
 
 function setupNavigation() {
-  // Navigation Sidebar
-  document.querySelectorAll('[data-view-target]').forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      const targetView = link.getAttribute('data-view-target');
-      navigateToView(targetView);
-    });
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('[data-view-target]');
+    if (!link) return;
+    event.preventDefault();
+    const targetView = link.getAttribute('data-view-target');
+    if (targetView) navigateToView(targetView);
   });
-
 }
 
 function handleRouteHash() {
-  const hash = window.location.hash.replace('#', '');
-  if (hash) {
-    navigateToView(hash, false);
-  } else {
+  const rawHash = window.location.hash.replace(/^#/, '');
+  if (!rawHash) {
     navigateToView('dashboard', false);
+    return;
   }
+  if (rawHash.startsWith('request-detail/')) {
+    const ref = decodeURIComponent(rawHash.split('/')[1] || '');
+    if (ref) {
+      openRequestDetail(ref);
+      return;
+    }
+  }
+  navigateToView(rawHash, false);
 }
 
 function navigateToView(viewId, updateHash = true) {
@@ -175,6 +374,9 @@ function navigateToView(viewId, updateHash = true) {
     sessionStorage.removeItem('gestion_user');
     sessionStorage.removeItem('gestion_token');
     AppState.currentUser = null;
+    AppState.isSuperAdmin = false;
+    AppState.canManageOps = false;
+    AppState.currentRole = 'collaborator';
     showToast('Vous avez été déconnecté avec succès.', 'info');
     navigateToView('login', updateHash);
     return;
@@ -184,22 +386,20 @@ function navigateToView(viewId, updateHash = true) {
   const appContainer = document.getElementById('appMainContainer');
   const authContainer = document.getElementById('authLayoutContainer');
 
+  if (!isAuthView && !sessionStorage.getItem('gestion_token')) {
+    viewId = 'login';
+    return navigateToView('login', updateHash);
+  }
+
   if (isAuthView) {
     if (appContainer) appContainer.style.display = 'none';
     if (authContainer) {
       authContainer.classList.add('active-auth');
       authContainer.style.display = 'flex';
     }
-
-    // Masquer tous les écrans auth
-    document.querySelectorAll('.auth-view-screen').forEach(el => {
-      el.style.display = 'none';
-    });
-    // Afficher l'écran auth spécifique
+    document.querySelectorAll('.auth-view-screen').forEach(el => { el.style.display = 'none'; });
     const targetAuth = document.getElementById(`authView-${viewId}`);
-    if (targetAuth) {
-      targetAuth.style.display = 'block';
-    }
+    if (targetAuth) targetAuth.style.display = 'block';
   } else {
     if (authContainer) {
       authContainer.classList.remove('active-auth');
@@ -207,21 +407,18 @@ function navigateToView(viewId, updateHash = true) {
     }
     if (appContainer) appContainer.style.display = 'flex';
 
-    // Restriction d'accès : interdire documents et vues admin aux collaborateurs
-    if (AppState.currentRole !== 'admin') {
-      const adminRestrictedViews = ['documents', 'document-new', 'users', 'stock-movements'];
-      if (adminRestrictedViews.includes(viewId)) {
-        showToast('Accès restreint : cette rubrique est réservée aux administrateurs.', 'warning');
+    if (!AppState.canManageOps) {
+      const opsRestrictedViews = ['operations', 'documents', 'document-new', 'users', 'stock-movements', 'settings'];
+      if (opsRestrictedViews.includes(viewId)) {
+        showToast('Accès restreint : cette rubrique est réservée aux responsables et administrateurs.', 'warning');
         viewId = 'dashboard';
       }
+    } else if (!AppState.isSuperAdmin && ['users', 'settings'].includes(viewId)) {
+      showToast('Cette rubrique d’administration générale est réservée à l’Administrateur.', 'warning');
+      viewId = 'operations';
     }
 
-    // Masquer toutes les vues internes
-    document.querySelectorAll('.view-section').forEach(view => {
-      view.classList.remove('active-view');
-    });
-
-    // Activer la vue cible
+    document.querySelectorAll('.view-section').forEach(view => view.classList.remove('active-view'));
     const targetElement = document.getElementById(`view-${viewId}`);
     if (targetElement) {
       targetElement.classList.add('active-view');
@@ -229,99 +426,61 @@ function navigateToView(viewId, updateHash = true) {
     } else {
       document.getElementById('view-dashboard')?.classList.add('active-view');
       AppState.currentView = 'dashboard';
+      viewId = 'dashboard';
     }
 
-    // Mettre à jour les liens de sidebar
     document.querySelectorAll('.nav-item-link').forEach(link => {
-      if (link.getAttribute('data-view-target') === viewId) {
-        link.classList.add('active');
-      } else {
-        link.classList.remove('active');
-      }
+      link.classList.toggle('active', link.getAttribute('data-view-target') === viewId);
     });
 
-    // Redessiner les graphiques si on arrive sur le tableau de bord
     if (viewId === 'dashboard') {
       setTimeout(() => {
-        if (typeof initDashboardCharts === 'function') {
-          initDashboardCharts();
-        }
+        if (typeof initDashboardCharts === 'function') initDashboardCharts();
       }, 50);
+    } else if (viewId === 'profile' && typeof BackendApi !== 'undefined') {
+      BackendApi.loadMyLoginHistory();
+    } else if (viewId === 'settings' && AppState.isSuperAdmin && typeof BackendApi !== 'undefined') {
+      BackendApi.loadAdminSettingsAndRefs();
+      BackendApi.loadAuditLogs();
+      BackendApi.loadBackups();
     }
 
-    // Re-synchroniser les accès par rôle pour la vue affichée
     applyRoleVisibility(AppState.currentRole);
   }
 
-  // Mise à jour de l'URL
-  if (updateHash) {
+  if (updateHash && window.location.hash !== `#${viewId}`) {
     window.location.hash = viewId;
   }
 
-  // Remonter en haut de page
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* ==========================================================================
-   2. Switcher de Profils (Collaborateur vs Administrateur)
-   ========================================================================== */
 function setupRoleSwitcher() {
-  const switchBtns = document.querySelectorAll('.role-pill-btn');
-  switchBtns.forEach(btn => {
+  document.querySelectorAll('.role-pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const role = btn.getAttribute('data-role');
-      setUserRole(role);
+      if (role) setUserRole(role);
     });
   });
 }
 
 function setUserRole(role, notify = true) {
+  if (!AppState.canManageOps && role === 'admin') {
+    showToast('Votre compte ne dispose pas des droits de gestion.', 'warning');
+    return;
+  }
   AppState.currentRole = role;
-  const user = AppState.currentUser || (role === 'admin' 
-    ? { name: 'Administrateur', role: 'Administrateur', service: 'Direction' } 
-    : { name: 'Collaborateur', role: 'Collaborateur', service: 'Ressources Humaines' });
-
-  // Mettre à jour la Navbar
-  const nameEl = document.getElementById('topbarUserName');
-  const roleEl = document.getElementById('topbarUserRole');
-  const avatarEl = document.getElementById('topbarUserAvatar');
-  const activeRoleText = document.getElementById('topbarActiveRoleText');
-
-  if (nameEl) nameEl.textContent = user.name;
-  if (roleEl) roleEl.textContent = user.role;
-  if (avatarEl) {
-    const initials = (user.name || 'AD').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-    avatarEl.textContent = initials;
-  }
-  if (activeRoleText) {
-    activeRoleText.textContent = `Profil : ${user.role}`;
-  }
-
-  // Basculer l'affichage du Dashboard spécifique (Collaborateur vs Superviseur)
   const collabDashboard = document.getElementById('collaboratorDashboardView');
   const adminDashboard = document.getElementById('adminDashboardView');
   if (collabDashboard && adminDashboard) {
-    if (role === 'admin') {
-      collabDashboard.style.display = 'none';
-      adminDashboard.style.display = 'block';
-      if (typeof initDashboardCharts === 'function') {
-        setTimeout(() => initDashboardCharts(), 60);
-      }
-    } else {
-      collabDashboard.style.display = 'block';
-      adminDashboard.style.display = 'none';
-    }
+    collabDashboard.style.display = role === 'admin' ? 'none' : 'block';
+    adminDashboard.style.display = role === 'admin' ? 'block' : 'none';
   }
-
-  // Basculer l'affichage des actions réservées à l'administrateur
   applyRoleVisibility(role);
-
-  if (notify) {
-    showToast(`Profil actif : ${user.name} (${user.role})`, 'info');
+  if (notify && AppState.currentUser) {
+    showToast(`Affichage basculé : ${AppState.currentUser.name}`, 'info');
   }
-
-  // Synchronisation dynamique immédiate des données et KPIs selon le profil
-  if (typeof BackendApi !== 'undefined' && BackendApi.refreshAll) {
+  if (typeof BackendApi !== 'undefined') {
     BackendApi.refreshAll({ silent: true });
   }
 }
@@ -331,8 +490,8 @@ function updateCollaboratorLiveTracker() {
   if (!card) return;
 
   const requests = AppState.currentRequests || [];
-  const myRequests = AppState.currentUser 
-    ? requests.filter(r => r.user_id == AppState.currentUser.id) 
+  const myRequests = AppState.currentUser
+    ? requests.filter(r => Number(r.user_id) === Number(AppState.currentUser.id))
     : requests;
 
   if (myRequests.length === 0) {
@@ -350,151 +509,341 @@ function updateCollaboratorLiveTracker() {
 
   if (refEl) refEl.textContent = latest.reference;
   card.style.display = 'block';
-
   [b1, b2, b3, b4].forEach(b => { if (b) b.className = 'request-progress-bar'; });
 
-  if (latest.status === 'En attente') {
+  const st = latest.status;
+  if (st === 'Brouillon') {
+    if (b1) b1.className = 'request-progress-bar active';
+    if (badgeEl) { badgeEl.className = 'badge bg-secondary-subtle text-secondary border'; badgeEl.textContent = 'Brouillon non soumis'; }
+  } else if (PENDING_REQUEST_STATUSES.includes(st) || st === 'À corriger') {
     if (b1) b1.className = 'request-progress-bar done';
     if (b2) b2.className = 'request-progress-bar active';
     if (badgeEl) {
-      badgeEl.className = 'badge bg-warning-subtle text-warning border';
-      badgeEl.textContent = 'En attente d\'approbation';
+      badgeEl.className = 'badge bg-warning-subtle text-warning-emphasis border';
+      badgeEl.textContent = st === 'À corriger' ? 'Complément attendu' : st;
     }
-  } else if (latest.status === 'Approuvée') {
+  } else if (['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution', 'En attente d\'approvisionnement'].includes(st)) {
     if (b1) b1.className = 'request-progress-bar done';
     if (b2) b2.className = 'request-progress-bar done';
-    if (b3) b3.className = 'request-progress-bar done';
-    if (b4) b4.className = 'request-progress-bar done';
+    if (b3) b3.className = 'request-progress-bar active';
+    if (badgeEl) {
+      badgeEl.className = 'badge bg-info-subtle text-info-emphasis border';
+      badgeEl.textContent = `${st} • Traitement en cours`;
+    }
+  } else if (['Exécutée', 'Livrée', 'En attente de justification', 'Restituée', 'Clôturée'].includes(st)) {
+    [b1, b2, b3, b4].forEach(b => { if (b) b.className = 'request-progress-bar done'; });
     if (badgeEl) {
       badgeEl.className = 'badge bg-success-subtle text-success border';
-      badgeEl.textContent = 'Approuvée • Matériel disponible';
+      badgeEl.textContent = st;
     }
-  } else if (latest.status === 'Restituée') {
-    if (b1) b1.className = 'request-progress-bar done';
-    if (b2) b2.className = 'request-progress-bar done';
-    if (b3) b3.className = 'request-progress-bar done';
-    if (b4) b4.className = 'request-progress-bar done';
-    if (badgeEl) {
-      badgeEl.className = 'badge bg-secondary-subtle text-secondary border';
-      badgeEl.textContent = 'Restituée (Clôturée)';
-    }
-  } else if (latest.status === 'Rejetée') {
+  } else if (['Rejetée', 'Annulée'].includes(st)) {
     if (b1) b1.className = 'request-progress-bar done';
     if (badgeEl) {
       badgeEl.className = 'badge bg-danger-subtle text-danger border';
-      badgeEl.textContent = 'Non accordée (Rejetée)';
+      badgeEl.textContent = st;
     }
   }
 }
 
-function applyRoleVisibility(role = AppState.currentRole) {
-  document.body.classList.remove('role-collaborator', 'role-admin');
-  document.body.classList.add(`role-${role}`);
-
-  const adminElements = document.querySelectorAll('.admin-only-feature');
-  adminElements.forEach(el => {
-    el.style.setProperty('display', role === 'admin' ? '' : 'none', 'important');
-  });
-
-  const collabElements = document.querySelectorAll('.collaborator-only-feature');
-  collabElements.forEach(el => {
-    el.style.setProperty('display', role === 'collaborator' ? '' : 'none', 'important');
-  });
-}
-
 /* ==========================================================================
-   3. Assistant Nouvelle Demande (Stepper 3 Étapes)
+   2. Module 2 : Assistant Nouvelle Demande, Édition & Workflow Complet
    ========================================================================== */
+window.preselectArticleForRequest = function (articleId) {
+  const art = AppState.currentArticles.find(a => Number(a.id) === Number(articleId));
+  resetNewRequestForm();
+  if (art && art.quantity > 0) {
+    AppState.selectedArticlesForRequest[art.code] = {
+      id: art.code,
+      dbId: art.id,
+      name: art.name,
+      category: art.category,
+      stock: art.quantity,
+      qty: 1
+    };
+    if (typeof BackendApi !== 'undefined') {
+      BackendApi.renderSelectableArticles(AppState.currentArticles);
+    }
+    updateSelectedCounter();
+    showToast(`"${art.name}" ajouté à votre sélection.`, 'info');
+  }
+  navigateToView('request-new');
+};
+
+window.startEditRequest = async function (reference) {
+  let req = (AppState.currentRequests || []).find(r => r.reference === reference);
+  if (!req) {
+    try {
+      const res = await fetch(`/api/requests/${encodeURIComponent(reference)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) req = json.data;
+      }
+    } catch (e) {}
+  }
+  if (!req) {
+    showToast('Demande introuvable pour modification.', 'warning');
+    return;
+  }
+
+  if (!AppState.currentArticles || AppState.currentArticles.length === 0) {
+    if (typeof BackendApi !== 'undefined' && BackendApi.loadArticles) {
+      await BackendApi.loadArticles();
+    }
+  }
+
+  resetNewRequestForm();
+  AppState.editingRequestRef = req.reference;
+
+  const banner = document.getElementById('editingRequestBanner');
+  const refText = document.getElementById('editingRequestRefText');
+  const pageTitle = document.getElementById('requestNewPageTitle');
+  const breadcrumb = document.getElementById('requestNewBreadcrumbText');
+  const btnSubmit = document.getElementById('btnSubmitRequest');
+  if (banner) banner.style.display = 'flex';
+  if (refText) refText.textContent = req.reference;
+  if (pageTitle) pageTitle.textContent = `Modifier ma demande ${req.reference}`;
+  if (breadcrumb) breadcrumb.textContent = `Modification ${req.reference}`;
+  if (btnSubmit) btnSubmit.innerHTML = '<i class="bi bi-check2-circle me-1"></i> Enregistrer les modifications';
+
+  const items = req.items || [];
+  items.forEach(it => {
+    const art = it.article || (AppState.currentArticles || []).find(a => Number(a.id) === Number(it.article_id));
+    if (art) {
+      const artKey = art.code || String(art.id);
+      AppState.selectedArticlesForRequest[artKey] = {
+        id: artKey,
+        dbId: art.id,
+        name: art.name,
+        category: art.category,
+        stock: Math.max(art.quantity || 1, it.quantity_requested || 1),
+        qty: it.quantity_requested || 1
+      };
+    }
+  });
+
+  const nonStockCheck = document.getElementById('checkNonStockRequest');
+  const nonStockWrap = document.getElementById('nonStockDescriptionWrapper');
+  const nonStockDesc = document.getElementById('inputNonStockDescription');
+  if (req.service_description || items.length === 0) {
+    if (nonStockCheck) nonStockCheck.checked = true;
+    if (nonStockWrap) nonStockWrap.style.display = 'block';
+    if (nonStockDesc) nonStockDesc.value = req.service_description || req.motif || '';
+  }
+
+  if (typeof BackendApi !== 'undefined') {
+    BackendApi.renderSelectableArticles(AppState.currentArticles);
+  }
+  updateSelectedCounter();
+
+  const catSel = document.getElementById('selectRequestCategory');
+  if (catSel && req.category) catSel.value = req.category;
+  const typeSel = document.getElementById('selectRequestTypeOp');
+  if (typeSel && req.type_operation) typeSel.value = req.type_operation;
+  const srvSel = document.getElementById('selectRequestService');
+  if (srvSel && req.service) srvSel.value = req.service;
+  const motifIn = document.getElementById('inputRequestMotif');
+  if (motifIn) motifIn.value = req.motif || '';
+  const dateIn = document.getElementById('inputRequestDateNeeded');
+  if (dateIn && req.date_needed) dateIn.value = String(req.date_needed).slice(0, 10);
+  const urgSel = document.getElementById('selectRequestUrgency');
+  if (urgSel && req.urgency) urgSel.value = req.urgency;
+  const notesIn = document.getElementById('inputRequestNotes');
+  if (notesIn) notesIn.value = req.notes || '';
+
+  navigateToView('request-new');
+};
+
 function setupStepper() {
-  // Stepper buttons
   const btnNext1 = document.getElementById('btnStep1Next');
   const btnPrev2 = document.getElementById('btnStep2Prev');
   const btnNext2 = document.getElementById('btnStep2Next');
   const btnPrev3 = document.getElementById('btnStep3Prev');
+  const btnSaveDraft = document.getElementById('btnSaveDraftRequest');
   const btnSubmit = document.getElementById('btnSubmitRequest');
+  const checkNonStock = document.getElementById('checkNonStockRequest');
+  const nonStockWrapper = document.getElementById('nonStockDescriptionWrapper');
+  const searchCatalog = document.getElementById('searchNewReqArticle');
+  const btnCancelEdit = document.getElementById('btnCancelEditRequest');
 
-  if (btnNext1) {
-    btnNext1.addEventListener('click', () => {
-      // Vérifier si au moins 1 article est sélectionné
-      const selectedCount = Object.keys(AppState.selectedArticlesForRequest).length;
-      if (selectedCount === 0) {
-        showToast('Veuillez cocher au moins un article pour votre demande.', 'warning');
-        return;
-      }
-      goToStep(2);
+  checkNonStock?.addEventListener('change', () => {
+    if (nonStockWrapper) {
+      nonStockWrapper.style.display = checkNonStock.checked ? 'block' : 'none';
+    }
+  });
+
+  btnCancelEdit?.addEventListener('click', () => {
+    resetNewRequestForm();
+    showToast('Mode modification annulé.', 'info');
+  });
+
+  searchCatalog?.addEventListener('input', () => {
+    const q = searchCatalog.value.trim().toLowerCase();
+    document.querySelectorAll('#selectableArticlesTableBody tr.selectable-article-row').forEach(tr => {
+      tr.style.display = !q || tr.innerText.toLowerCase().includes(q) ? '' : 'none';
     });
-  }
+  });
 
-  if (btnPrev2) btnPrev2.addEventListener('click', () => goToStep(1));
-  if (btnNext2) {
-    btnNext2.addEventListener('click', () => {
-      const motif = document.getElementById('inputRequestMotif').value.trim();
-      if (!motif) {
-        showToast('Veuillez renseigner le motif de la demande.', 'warning');
-        return;
+  btnNext1?.addEventListener('click', () => {
+    const selectedCount = Object.keys(AppState.selectedArticlesForRequest).length;
+    const isNonStock = Boolean(checkNonStock?.checked);
+    const nonStockDesc = document.getElementById('inputNonStockDescription')?.value.trim() || '';
+
+    if (selectedCount === 0 && !isNonStock) {
+      showToast('Sélectionnez au moins un article ou cochez « Demande sans article en stock ».', 'warning');
+      return;
+    }
+    if (selectedCount === 0 && isNonStock && !nonStockDesc) {
+      showToast('Veuillez décrire précisément la prestation ou le besoin souhaité.', 'warning');
+      return;
+    }
+    if (isNonStock && selectedCount === 0) {
+      const catSel = document.getElementById('selectRequestCategory');
+      if (catSel && catSel.value === 'Papeterie et fournitures de bureau') {
+        catSel.value = 'Prestations de services';
       }
-      buildStep3Recap();
-      goToStep(3);
-    });
-  }
-
-  if (btnPrev3) btnPrev3.addEventListener('click', () => goToStep(2));
-
-  if (btnSubmit) {
-    btnSubmit.addEventListener('click', async () => {
-      const selectedKeys = Object.keys(AppState.selectedArticlesForRequest);
-      if (selectedKeys.length === 0) {
-        showToast('Veuillez sélectionner au moins un article.', 'warning');
-        return;
+      const motifIn = document.getElementById('inputRequestMotif');
+      if (motifIn && !motifIn.value.trim()) {
+        motifIn.value = nonStockDesc.slice(0, 120);
       }
-      const motif = document.getElementById('inputRequestMotif').value.trim() || 'Emprunt matériel interne';
-      const typeOp = document.getElementById('selectRequestTypeOp')?.value || 'Emprunt temporaire';
-      const dateNeeded = document.getElementById('inputRequestDateNeeded')?.value || new Date().toISOString().split('T')[0];
-      const urgency = document.getElementById('selectRequestUrgency')?.value || 'Normale';
+    }
+    goToStep(2);
+  });
 
-      const items = selectedKeys.map(k => ({
-        article_id: AppState.selectedArticlesForRequest[k].dbId || 1,
-        quantity: AppState.selectedArticlesForRequest[k].qty || 1
-      }));
+  btnPrev2?.addEventListener('click', () => goToStep(1));
 
-      try {
-        const res = await fetch('/api/requests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({
-            user_id: AppState.currentUser?.id || 1,
-            type_operation: typeOp,
-            motif: motif,
-            service: AppState.currentUser?.service || 'Général',
-            date_needed: dateNeeded,
-            urgency: urgency,
-            items: items
-          })
-        });
-        const result = await res.json();
-        if (result.success) {
-          showToast(`Demande ${result.data.reference} enregistrée avec succès !`, 'success');
-          resetNewRequestForm();
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.refreshAll({ showIndicator: true });
-          }
-          navigateToView('dashboard');
-          return;
-        }
-      } catch (err) {
-        console.warn('API submission failed, using local mode:', err);
-      }
+  btnNext2?.addEventListener('click', () => {
+    const motif = document.getElementById('inputRequestMotif')?.value.trim();
+    if (!motif) {
+      showToast('Veuillez renseigner l’objet / motif principal de la demande.', 'warning');
+      return;
+    }
+    buildStep3Recap();
+    goToStep(3);
+  });
 
-      // Fallback local
-      const newRef = 'DEM-2025-00048';
-      showToast(`Demande interne ${newRef} enregistrée et transmise au gestionnaire !`, 'success');
-      resetNewRequestForm();
-      navigateToView('dashboard');
-    });
-  }
+  btnPrev3?.addEventListener('click', () => goToStep(2));
 
-  // Interactivité du panier d'articles
+  btnSaveDraft?.addEventListener('click', () => submitOrSaveRequest(true));
+  btnSubmit?.addEventListener('click', () => submitOrSaveRequest(false));
+
   document.querySelectorAll('.selectable-article-row').forEach(bindSelectableArticleRow);
+}
+
+async function submitOrSaveRequest(saveAsDraft = false) {
+  const selectedKeys = Object.keys(AppState.selectedArticlesForRequest);
+  const isNonStock = Boolean(document.getElementById('checkNonStockRequest')?.checked);
+  const nonStockDesc = document.getElementById('inputNonStockDescription')?.value.trim() || '';
+
+  if (selectedKeys.length === 0 && !isNonStock && !nonStockDesc) {
+    showToast('Veuillez sélectionner au moins un article ou décrire le besoin hors stock.', 'warning');
+    return;
+  }
+
+  const motif = document.getElementById('inputRequestMotif')?.value.trim();
+  if (!motif) {
+    showToast('Le motif de la demande est obligatoire.', 'warning');
+    return;
+  }
+
+  const typeOp = document.getElementById('selectRequestTypeOp')?.value || 'Dotation permanente';
+  const category = document.getElementById('selectRequestCategory')?.value || 'Autres besoins administratifs et logistiques';
+  const service = document.getElementById('selectRequestService')?.value || AppState.currentUser?.service || 'Administration & Logistique';
+  const dateNeeded = document.getElementById('inputRequestDateNeeded')?.value || new Date().toISOString().split('T')[0];
+  const urgency = document.getElementById('selectRequestUrgency')?.value || 'Normale';
+  const notes = document.getElementById('inputRequestNotes')?.value.trim() || '';
+  const files = document.getElementById('inputRequestAttachment')?.files;
+
+  const items = selectedKeys.map(k => ({
+    article_id: AppState.selectedArticlesForRequest[k].dbId,
+    quantity: Number(AppState.selectedArticlesForRequest[k].qty || 1)
+  }));
+
+  const btnSubmit = document.getElementById('btnSubmitRequest');
+  const btnDraft = document.getElementById('btnSaveDraftRequest');
+  if (btnSubmit) btnSubmit.disabled = true;
+  if (btnDraft) btnDraft.disabled = true;
+
+  try {
+    if (AppState.editingRequestRef) {
+      const editRef = AppState.editingRequestRef;
+      const updateRes = await fetch(`/api/requests/${encodeURIComponent(editRef)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category,
+          motif,
+          service_description: isNonStock ? nonStockDesc : null,
+          service,
+          date_needed: dateNeeded,
+          urgency,
+          notes: notes || null,
+          items,
+          submit_now: !saveAsDraft
+        })
+      });
+      const updateResult = await updateRes.json();
+      if (!updateRes.ok || !updateResult.success) {
+        const msg = Object.values(updateResult.errors || {}).flat()[0] || updateResult.message || 'Impossible de modifier la demande.';
+        showToast(msg, 'danger');
+        return;
+      }
+
+      if (files && files.length > 0) {
+        for (const file of files) {
+          const fd = new FormData();
+          fd.append('file', file);
+          await fetch(`/api/requests/${encodeURIComponent(editRef)}/attachments`, { method: 'POST', body: fd });
+        }
+      }
+
+      showToast(saveAsDraft ? `Brouillon ${editRef} mis à jour.` : `Demande ${editRef} mise à jour et soumise !`, 'success');
+      resetNewRequestForm();
+      await BackendApi.refreshAll({ showIndicator: true, silent: true });
+      openRequestDetail(editRef);
+      return;
+    }
+
+    const payload = new FormData();
+    payload.append('type_operation', typeOp);
+    payload.append('category', category);
+    payload.append('motif', motif);
+    if (isNonStock && nonStockDesc) {
+      payload.append('service_description', nonStockDesc);
+    }
+    payload.append('service', service);
+    payload.append('date_needed', dateNeeded);
+    payload.append('urgency', urgency);
+    if (notes) payload.append('notes', notes);
+    if (saveAsDraft) payload.append('save_as_draft', '1');
+
+    items.forEach((item, index) => {
+      payload.append(`items[${index}][article_id]`, item.article_id);
+      payload.append(`items[${index}][quantity]`, item.quantity);
+    });
+
+    if (files && files.length > 0) {
+      Array.from(files).forEach(file => payload.append('attachments[]', file));
+    }
+
+    const res = await fetch('/api/requests', { method: 'POST', body: payload });
+    const result = await res.json();
+    if (!res.ok || !result.success) {
+      const msg = Object.values(result.errors || {}).flat()[0] || result.message || 'Enregistrement impossible.';
+      showToast(msg, 'danger');
+      return;
+    }
+
+    showToast(result.message || `Demande ${result.data.reference} enregistrée !`, 'success');
+    resetNewRequestForm();
+    await BackendApi.refreshAll({ showIndicator: true, silent: true });
+    openRequestDetail(result.data.reference);
+  } catch (err) {
+    console.warn('Request save error:', err);
+    showToast('Impossible d’enregistrer la demande pour le moment. Veuillez réessayer.', 'danger');
+  } finally {
+    if (btnSubmit) btnSubmit.disabled = false;
+    if (btnDraft) btnDraft.disabled = false;
+  }
 }
 
 function bindSelectableArticleRow(row) {
@@ -506,19 +855,25 @@ function bindSelectableArticleRow(row) {
   const articleDbId = parseInt(row.getAttribute('data-article-db-id'), 10) || 1;
   const articleName = row.getAttribute('data-article-name');
   const articleCategory = row.getAttribute('data-article-category');
-  const articleStock = parseInt(row.getAttribute('data-article-stock'), 10);
+  const articleStock = parseInt(row.getAttribute('data-article-stock'), 10) || 0;
+
+  if (AppState.selectedArticlesForRequest[articleId]) {
+    if (checkbox && !checkbox.disabled) checkbox.checked = true;
+    if (qtyInput) qtyInput.value = AppState.selectedArticlesForRequest[articleId].qty || 1;
+    row.classList.add('table-primary');
+  }
 
   const updateRowState = () => {
-    if (checkbox.checked) {
+    if (checkbox?.checked) {
       row.classList.add('table-primary');
-      const qty = parseInt(qtyInput.value, 10) || 1;
+      const qty = Math.max(1, parseInt(qtyInput?.value, 10) || 1);
       AppState.selectedArticlesForRequest[articleId] = {
         id: articleId,
         dbId: articleDbId,
         name: articleName,
         category: articleCategory,
         stock: articleStock,
-        qty: qty
+        qty
       };
     } else {
       row.classList.remove('table-primary');
@@ -527,41 +882,38 @@ function bindSelectableArticleRow(row) {
     updateSelectedCounter();
   };
 
-  if (checkbox) {
-    checkbox.addEventListener('change', updateRowState);
-  }
+  checkbox?.addEventListener('change', updateRowState);
 
   if (btnMinus && qtyInput) {
     btnMinus.addEventListener('click', () => {
-      let val = parseInt(qtyInput.value, 10) || 1;
+      const val = parseInt(qtyInput.value, 10) || 1;
       if (val > 1) {
         qtyInput.value = val - 1;
-        if (checkbox.checked) updateRowState();
+        if (checkbox?.checked) updateRowState();
       }
     });
   }
 
   if (btnPlus && qtyInput) {
     btnPlus.addEventListener('click', () => {
-      let val = parseInt(qtyInput.value, 10) || 1;
-      if (val < articleStock) {
+      const val = parseInt(qtyInput.value, 10) || 1;
+      if (articleStock === 0 || val < articleStock) {
         qtyInput.value = val + 1;
-        if (checkbox.checked) updateRowState();
+        if (checkbox && !checkbox.checked && !checkbox.disabled) checkbox.checked = true;
+        updateRowState();
       } else {
-        showToast(`Quantité maximale disponible atteinte (${articleStock})`, 'warning');
+        showToast(`Quantité disponible maximale en stock : ${articleStock}`, 'warning');
       }
     });
   }
 
-  if (qtyInput) {
-    qtyInput.addEventListener('change', () => {
-      let val = parseInt(qtyInput.value, 10) || 1;
-      if (val < 1) val = 1;
-      if (val > articleStock) val = articleStock;
-      qtyInput.value = val;
-      if (checkbox.checked) updateRowState();
-    });
-  }
+  qtyInput?.addEventListener('change', () => {
+    let val = parseInt(qtyInput.value, 10) || 1;
+    if (val < 1) val = 1;
+    if (articleStock > 0 && val > articleStock) val = articleStock;
+    qtyInput.value = val;
+    if (checkbox?.checked) updateRowState();
+  });
 }
 
 function updateSelectedCounter() {
@@ -575,166 +927,231 @@ function updateSelectedCounter() {
 
 function goToStep(stepNumber) {
   AppState.currentStep = stepNumber;
+  ['stepContent1', 'stepContent2', 'stepContent3'].forEach((id, idx) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = idx + 1 === stepNumber ? 'block' : 'none';
+  });
 
-  // Cacher tous les blocs d'étapes
-  document.getElementById('stepContent1').style.display = stepNumber === 1 ? 'block' : 'none';
-  document.getElementById('stepContent2').style.display = stepNumber === 2 ? 'block' : 'none';
-  document.getElementById('stepContent3').style.display = stepNumber === 3 ? 'block' : 'none';
-
-  // Mise à jour de l'en-tête du stepper
   for (let i = 1; i <= 3; i++) {
     const stepHeader = document.getElementById(`stepHeader${i}`);
     if (stepHeader) {
       stepHeader.classList.remove('active', 'completed');
-      if (i === stepNumber) {
-        stepHeader.classList.add('active');
-      } else if (i < stepNumber) {
-        stepHeader.classList.add('completed');
-      }
+      if (i === stepNumber) stepHeader.classList.add('active');
+      else if (i < stepNumber) stepHeader.classList.add('completed');
     }
   }
-
-  window.scrollTo({ top: 120, behavior: 'smooth' });
+  window.scrollTo({ top: 100, behavior: 'smooth' });
 }
 
 function buildStep3Recap() {
   const recapTableBody = document.getElementById('step3RecapTableBody');
+  const catRecap = document.getElementById('step3CategoryRecap');
   const motifRecap = document.getElementById('step3MotifRecap');
   const serviceRecap = document.getElementById('step3ServiceRecap');
   const dateRecap = document.getElementById('step3DateRecap');
+  const notesRecap = document.getElementById('step3NotesRecap');
 
-  if (motifRecap) motifRecap.textContent = document.getElementById('inputRequestMotif').value || '-';
-  if (serviceRecap) serviceRecap.textContent = document.getElementById('selectRequestService').value || '-';
-  if (dateRecap) dateRecap.textContent = document.getElementById('inputRequestDateNeeded').value || 'Dès que possible';
+  const category = document.getElementById('selectRequestCategory')?.value || '-';
+  const motif = document.getElementById('inputRequestMotif')?.value || '-';
+  const service = document.getElementById('selectRequestService')?.value || '-';
+  const dateNeeded = document.getElementById('inputRequestDateNeeded')?.value || 'Dès que possible';
+  const urgency = document.getElementById('selectRequestUrgency')?.value || 'Normale';
+  const notes = document.getElementById('inputRequestNotes')?.value.trim() || '';
+  const nonStockDesc = document.getElementById('checkNonStockRequest')?.checked
+    ? (document.getElementById('inputNonStockDescription')?.value.trim() || '')
+    : '';
+  const filesCount = document.getElementById('inputRequestAttachment')?.files?.length || 0;
+
+  if (catRecap) catRecap.textContent = category;
+  if (motifRecap) motifRecap.textContent = motif;
+  if (serviceRecap) serviceRecap.textContent = service;
+  if (dateRecap) dateRecap.textContent = `${dateNeeded} • Urgence : ${urgency}`;
+  if (notesRecap) {
+    const parts = [];
+    if (nonStockDesc) parts.push(`Besoin hors stock / prestation : ${nonStockDesc}`);
+    if (notes) parts.push(`Justification : ${notes}`);
+    if (filesCount > 0) parts.push(`${filesCount} pièce(s) jointe(s) sélectionnée(s)`);
+    notesRecap.textContent = parts.length ? parts.join(' | ') : 'Aucune note complémentaire.';
+  }
 
   if (recapTableBody) {
     recapTableBody.innerHTML = '';
     const articles = Object.values(AppState.selectedArticlesForRequest);
-    articles.forEach(art => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="fw-semibold">${art.name}</td>
-        <td><span class="badge bg-light text-dark">${art.category}</span></td>
-        <td class="text-center fw-bold text-primary">${art.qty}</td>
-        <td class="text-end text-muted">${art.stock} en stock</td>
-      `;
-      recapTableBody.appendChild(tr);
-    });
+    if (articles.length === 0) {
+      recapTableBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-3">${escHtml(nonStockDesc || 'Prestation / besoin hors stock (aucun article magasin sélectionné)')}</td></tr>`;
+    } else {
+      articles.forEach(art => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="fw-semibold">${escHtml(art.name)}</td>
+          <td><span class="badge bg-light text-dark border">${escHtml(art.category)}</span></td>
+          <td class="text-center fw-bold text-primary">${art.qty}</td>
+          <td class="text-end text-muted">${art.stock} en stock</td>
+        `;
+        recapTableBody.appendChild(tr);
+      });
+    }
   }
 }
 
 function resetNewRequestForm() {
   AppState.selectedArticlesForRequest = {};
+  AppState.editingRequestRef = null;
+
+  const banner = document.getElementById('editingRequestBanner');
+  const pageTitle = document.getElementById('requestNewPageTitle');
+  const breadcrumb = document.getElementById('requestNewBreadcrumbText');
+  const btnSubmit = document.getElementById('btnSubmitRequest');
+  if (banner) banner.style.display = 'none';
+  if (pageTitle) pageTitle.textContent = 'Créer une nouvelle demande interne';
+  if (breadcrumb) breadcrumb.textContent = 'Nouvelle demande';
+  if (btnSubmit) btnSubmit.innerHTML = '<i class="bi bi-send-check me-1"></i> Soumettre la demande';
+
+  const checkNonStock = document.getElementById('checkNonStockRequest');
+  const nonStockWrapper = document.getElementById('nonStockDescriptionWrapper');
+  const nonStockInput = document.getElementById('inputNonStockDescription');
+  if (checkNonStock) checkNonStock.checked = false;
+  if (nonStockWrapper) nonStockWrapper.style.display = 'none';
+  if (nonStockInput) nonStockInput.value = '';
+
   document.querySelectorAll('.article-select-checkbox').forEach(cb => { cb.checked = false; });
   document.querySelectorAll('.selectable-article-row').forEach(row => { row.classList.remove('table-primary'); });
   document.querySelectorAll('.qty-input').forEach(input => { input.value = 1; });
-  document.getElementById('inputRequestMotif').value = '';
-  document.getElementById('inputRequestNotes').value = '';
+
+  const motifEl = document.getElementById('inputRequestMotif');
+  const notesEl = document.getElementById('inputRequestNotes');
+  const attachEl = document.getElementById('inputRequestAttachment');
+  if (motifEl) motifEl.value = '';
+  if (notesEl) notesEl.value = '';
+  if (attachEl) attachEl.value = '';
+
   updateSelectedCounter();
   goToStep(1);
 }
 
-/* ==========================================================================
-   4. Détails de la Demande : Onglets & Circuit de Validation
-   ========================================================================== */
 function setupDetailTabs() {
   const tabBtns = document.querySelectorAll('.tab-nav-btn');
   tabBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       tabBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
       const targetTab = btn.getAttribute('data-detail-tab');
-      document.querySelectorAll('.detail-tab-pane').forEach(pane => {
-        pane.style.display = 'none';
-      });
-
+      document.querySelectorAll('.detail-tab-pane').forEach(pane => { pane.style.display = 'none'; });
       const paneTarget = document.getElementById(`tabPane-${targetTab}`);
-      if (paneTarget) {
-        paneTarget.style.display = 'block';
-      }
+      if (paneTarget) paneTarget.style.display = 'block';
     });
   });
 }
 
 function requestStatusBadge(status) {
   const classes = {
+    'Validée': 'badge-approved',
     'Approuvée': 'badge-approved',
+    'Exécutée': 'badge-approved',
     'Livrée': 'badge-approved',
     'Restituée': 'badge-approved',
     'Clôturée': 'badge-approved',
-    'Rejetée': 'badge-rejected',
+    'En cours d\'exécution': 'badge-info-status',
+    'En cours d’exécution': 'badge-info-status',
+    'En attente d\'approvisionnement': 'badge-pending',
+    'En attente de justification': 'badge-pending',
+    'Soumise': 'badge-pending',
+    'En attente de vérification': 'badge-pending',
+    'En attente de validation': 'badge-pending',
+    'En attente': 'badge-pending',
+    'Brouillon': 'badge-pending',
     'À corriger': 'badge-rejected',
-    'Annulée': 'badge-rejected',
-    'Brouillon': 'badge-pending'
+    'Rejetée': 'badge-rejected',
+    'Annulée': 'badge-rejected'
   };
   const badgeClass = classes[status] || 'badge-pending';
-  return `<span class="badge-status ${badgeClass}"><span class="badge-status-dot"></span> ${status || 'En attente'}</span>`;
+  return `<span class="badge-status ${badgeClass}"><span class="badge-status-dot"></span> ${escHtml(status || 'Soumise')}</span>`;
 }
 
-async function approveRequest(requestId, triggerBtn = null) {
-  if (!requestId) return;
-  if (AppState.currentRole !== 'admin') {
-    showToast('Accès refusé : Seul le Gestionnaire de stock / Administrateur a l\'autorité d\'approuver les demandes.', 'danger');
-    return;
-  }
-  if (typeof BackendApi !== 'undefined' && BackendApi.approveRequest) {
-    const approved = await BackendApi.approveRequest(requestId, triggerBtn);
-    if (approved) {
-      openPdfModal(requestId);
-    }
-  }
-}
-
-async function cancelCollaboratorRequest(requestId) {
-  if (!requestId) return;
-  if (confirm(`Confirmez-vous l'annulation de votre demande ${requestId} ?`)) {
-    await BackendApi.transitionRequest(requestId, 'cancel');
-  }
-}
-
-function openRequestDetail(reference) {
+async function openRequestDetail(reference) {
+  if (!reference) return;
   AppState.selectedRequestRef = reference;
-  const req = (AppState.currentRequests || []).find(r => r.reference === reference);
+
+  let req = (AppState.currentRequests || []).find(r => r.reference === reference);
+  try {
+    const res = await fetch(`/api/requests/${encodeURIComponent(reference)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        req = json.data;
+        const idx = (AppState.currentRequests || []).findIndex(r => r.reference === reference);
+        if (idx >= 0) AppState.currentRequests[idx] = req;
+      }
+    }
+  } catch (e) {
+    console.warn('openRequestDetail fetch error:', e);
+  }
+
   if (!req) {
-    navigateToView('request-detail');
+    showToast('Demande introuvable.', 'warning');
     return;
   }
 
-  // Titre & Réf
   const refTitle = document.getElementById('detailRequestRef');
   if (refTitle) refTitle.textContent = `Demande n° ${req.reference}`;
 
-  // Badge Statut
   const badge = document.getElementById('requestDetailStatusBadge');
   if (badge) badge.outerHTML = requestStatusBadge(req.status).replace('<span ', '<span id="requestDetailStatusBadge" ');
 
-  // Sous-titre & Demandeur
-  const subtitle = document.getElementById('detailRequestSubtitle');
+  const urgBadge = document.getElementById('detailUrgencyBadge');
+  if (urgBadge) {
+    const urgClass = ['Urgente', 'Critique'].includes(req.urgency)
+      ? 'bg-danger-subtle text-danger border-danger-subtle'
+      : (req.urgency === 'Planifiée' ? 'bg-info-subtle text-info-emphasis border' : 'bg-light text-dark border');
+    urgBadge.className = `badge ${urgClass}`;
+    urgBadge.textContent = `Urgence : ${req.urgency || 'Normale'}`;
+  }
+
+  const overdueBadge = document.getElementById('detailOverdueBadge');
+  if (overdueBadge) overdueBadge.style.display = req.is_overdue ? 'inline-block' : 'none';
+
   const dName = req.user?.name || 'Demandeur';
   const dService = req.service || 'Service Général';
-  const createdDate = req.created_at ? new Date(req.created_at).toLocaleDateString('fr-FR', {day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : 'Récemment';
+  const createdDate = formatDateTime(req.created_at, 'Récemment');
+  const subtitle = document.getElementById('detailRequestSubtitle');
   if (subtitle) {
-    subtitle.innerHTML = `Créée le ${createdDate} par <strong id="detailDemandeurName">${dName}</strong> (${dService})`;
+    subtitle.innerHTML = `Créée le ${escHtml(createdDate)} par <strong id="detailDemandeurName">${escHtml(dName)}</strong> (${escHtml(dService)})`;
   }
 
-  // Onglet Infos
-  const motifEl = document.getElementById('detailRequestMotif');
-  if (motifEl) motifEl.textContent = req.motif || '-';
-
-  const notesEl = document.getElementById('detailRequestNotes');
-  if (notesEl) notesEl.textContent = req.notes || 'Aucune note particulière.';
-
-  const srvEl = document.getElementById('detailRequestService');
-  if (srvEl) srvEl.textContent = dService;
-
-  const createdEl = document.getElementById('detailRequestCreatedAt');
-  if (createdEl) createdEl.textContent = createdDate;
-
-  const updatedEl = document.getElementById('detailRequestUpdatedAt');
-  if (updatedEl) {
-    updatedEl.textContent = req.updated_at ? new Date(req.updated_at).toLocaleDateString('fr-FR', {day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : createdDate;
+  // Alerte motif rejet / complément / annulation
+  const reasonAlert = document.getElementById('detailDecisionReasonAlert');
+  const reasonTitle = document.getElementById('detailDecisionReasonTitle');
+  const reasonBody = document.getElementById('detailDecisionReasonBody');
+  if (reasonAlert && reasonTitle && reasonBody) {
+    if (req.status === 'Rejetée' && req.rejection_reason) {
+      reasonAlert.className = 'alert alert-danger mb-3';
+      reasonAlert.style.display = 'block';
+      reasonTitle.textContent = 'Motif du rejet :';
+      reasonBody.textContent = req.rejection_reason;
+    } else if (req.status === 'À corriger' && req.correction_reason) {
+      reasonAlert.className = 'alert alert-warning mb-3';
+      reasonAlert.style.display = 'block';
+      reasonTitle.textContent = 'Complément d’information demandé :';
+      reasonBody.textContent = req.correction_reason;
+    } else if (req.status === 'Annulée' && req.cancellation_reason) {
+      reasonAlert.className = 'alert alert-secondary mb-3';
+      reasonAlert.style.display = 'block';
+      reasonTitle.textContent = 'Motif de l’annulation :';
+      reasonBody.textContent = req.cancellation_reason;
+    } else {
+      reasonAlert.style.display = 'none';
+    }
   }
+
+  const setElText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setElText('detailRequestCategory', req.category || 'Autres besoins administratifs et logistiques');
+  setElText('detailRequestAssignee', req.assignee?.name ? `${req.assignee.name} (${req.assignee.service || 'Agent'})` : 'Non affectée');
+  setElText('detailRequestMotif', req.motif || '-');
+  setElText('detailRequestNotes', [req.service_description, req.notes].filter(Boolean).join(' — ') || 'Aucune note particulière.');
+  setElText('detailRequestService', dService);
+  setElText('detailRequestDateNeeded', formatDateShort(req.date_needed, 'Non précisée'));
+  setElText('detailRequestCreatedAt', createdDate);
+  setElText('detailRequestUpdatedAt', formatDateTime(req.updated_at, createdDate));
 
   // Timeline
   const timeStep1 = document.getElementById('detailTimelineStep1Time');
@@ -743,133 +1160,329 @@ function openRequestDetail(reference) {
   const timeStep2 = document.getElementById('timelineStepCurrent');
   const timeStep3 = document.getElementById('timelineStepApproved');
   if (timeStep2 && timeStep3) {
-    if (['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status)) {
-      timeStep2.className = 'timeline-step done';
-      const m2 = timeStep2.querySelector('.timeline-marker');
-      if (m2) m2.innerHTML = '<i class="bi bi-check"></i>';
-      const t2 = timeStep2.querySelector('.timeline-title');
-      if (t2) { t2.className = 'timeline-title'; t2.textContent = 'Validation effectuée'; }
+    const marker2 = timeStep2.querySelector('.timeline-marker');
+    const title2 = timeStep2.querySelector('.timeline-title');
+    const time2 = timeStep2.querySelector('.timeline-time');
+    const marker3 = timeStep3.querySelector('.timeline-marker');
+    const title3 = timeStep3.querySelector('.timeline-title');
+    const time3 = timeStep3.querySelector('.timeline-time');
 
-      timeStep3.className = 'timeline-step done';
-      const m3 = timeStep3.querySelector('.timeline-marker');
-      if (m3) m3.innerHTML = '<i class="bi bi-check-lg"></i>';
-      const t3 = timeStep3.querySelector('.timeline-title');
-      if (t3) { t3.className = 'timeline-title text-success fw-bold'; t3.textContent = 'Approuvée & Bon émis'; }
-      const time3 = timeStep3.querySelector('.timeline-time');
-      if (time3) time3.textContent = 'Bon officiel prêt au téléchargement';
-    } else if (req.status === 'Rejetée') {
+    if (AUTHORIZED_REQUEST_STATUSES.includes(req.status)) {
       timeStep2.className = 'timeline-step done';
-      const t2 = timeStep2.querySelector('.timeline-title');
-      if (t2) { t2.className = 'timeline-title text-danger fw-bold'; t2.textContent = 'Demande rejetée'; }
+      if (marker2) marker2.innerHTML = '<i class="bi bi-check"></i>';
+      if (title2) { title2.className = 'timeline-title'; title2.textContent = 'Vérification & Validation effectuées'; }
+      if (time2) time2.textContent = req.approver?.name ? `Validée par ${req.approver.name}` : 'Validée par la hiérarchie';
+
+      const isDone = ['Exécutée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status);
+      timeStep3.className = isDone ? 'timeline-step done' : 'timeline-step current';
+      if (marker3) marker3.innerHTML = isDone ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-gear"></i>';
+      if (title3) { title3.className = 'timeline-title text-success fw-bold'; title3.textContent = req.status; }
+      if (time3) time3.textContent = req.assignee?.name ? `Suivi par ${req.assignee.name} • Bon officiel disponible` : 'Bon officiel disponible';
+    } else if (['Annulée', 'Rejetée'].includes(req.status)) {
+      timeStep2.className = 'timeline-step done';
+      if (marker2) marker2.innerHTML = '<i class="bi bi-x-lg"></i>';
+      if (title2) { title2.className = 'timeline-title text-danger fw-bold'; title2.textContent = req.status; }
+      if (time2) time2.textContent = req.rejection_reason || req.cancellation_reason || formatDateTime(req.closed_at || req.updated_at);
       timeStep3.className = 'timeline-step';
+      if (marker3) marker3.innerHTML = '<i class="bi bi-dash"></i>';
+      if (title3) { title3.className = 'timeline-title text-muted'; title3.textContent = 'Circuit clôturé'; }
+      if (time3) time3.textContent = 'Aucune exécution ni sortie de stock';
+    } else if (req.status === 'À corriger') {
+      timeStep2.className = 'timeline-step current';
+      if (marker2) marker2.innerHTML = '<i class="bi bi-pencil"></i>';
+      if (title2) { title2.className = 'timeline-title text-warning fw-bold'; title2.textContent = 'Complément attendu du demandeur'; }
+      if (time2) time2.textContent = req.correction_reason || 'Veuillez compléter et re-soumettre la demande';
+      timeStep3.className = 'timeline-step';
+      if (marker3) marker3.innerHTML = '3';
+      if (title3) { title3.className = 'timeline-title'; title3.textContent = 'Exécution & Clôture'; }
+      if (time3) time3.textContent = 'En attente de re-soumission';
     } else {
       timeStep2.className = 'timeline-step current';
-      const m2 = timeStep2.querySelector('.timeline-marker');
-      if (m2) m2.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
-      const t2 = timeStep2.querySelector('.timeline-title');
-      if (t2) { t2.className = 'timeline-title text-warning fw-bold'; t2.textContent = "En attente d'approbation"; }
-
+      if (marker2) marker2.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
+      if (title2) { title2.className = 'timeline-title text-warning fw-bold'; title2.textContent = req.status; }
+      if (time2) time2.textContent = req.verifier?.name ? `Vérifiée par ${req.verifier.name}` : 'En cours d’instruction';
       timeStep3.className = 'timeline-step';
-      const m3 = timeStep3.querySelector('.timeline-marker');
-      if (m3) m3.innerHTML = '3';
-      const t3 = timeStep3.querySelector('.timeline-title');
-      if (t3) { t3.className = 'timeline-title'; t3.textContent = 'Approuvée & Bon émis'; }
-      const time3 = timeStep3.querySelector('.timeline-time');
-      if (time3) time3.textContent = 'En attente de signature du gestionnaire';
+      if (marker3) marker3.innerHTML = '3';
+      if (title3) { title3.className = 'timeline-title'; title3.textContent = 'Validation, Exécution & Réception'; }
+      if (time3) time3.textContent = 'En attente de décision';
     }
   }
 
-  // Articles tables
+  // Articles
   const items = req.items || [];
   const tabArticlesBtn = document.getElementById('detailTabArticlesBtn');
   if (tabArticlesBtn) tabArticlesBtn.textContent = `Articles (${items.length})`;
 
   const previewBody = document.getElementById('detailPreviewArticlesBody');
   if (previewBody) {
-    previewBody.innerHTML = '';
     if (items.length === 0) {
-      previewBody.innerHTML = '<tr><td colspan="4" class="text-center py-3 text-muted">Aucun article dans cette demande.</td></tr>';
+      previewBody.innerHTML = `<tr><td colspan="4" class="text-center py-3 text-muted">${escHtml(req.service_description || 'Prestation / besoin hors stock magasin.')}</td></tr>`;
     } else {
-      items.forEach(it => {
+      previewBody.innerHTML = items.map(it => {
         const art = it.article || {};
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><strong>${art.name || 'Article'}</strong></td>
-          <td><span class="badge bg-light text-dark border">${art.category || 'Général'}</span></td>
-          <td class="text-center fw-semibold">${it.quantity_requested} ${art.unit || 'unité(s)'}</td>
-          <td class="text-end"><span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> Pris en compte</span></td>
-        `;
-        previewBody.appendChild(tr);
-      });
+        return `
+          <tr>
+            <td><strong>${escHtml(art.name || 'Article')}</strong></td>
+            <td><span class="badge bg-light text-dark border">${escHtml(art.category || 'Général')}</span></td>
+            <td class="text-center fw-semibold">${it.quantity_requested} ${escHtml(art.unit || 'unité(s)')}</td>
+            <td class="text-end">${AUTHORIZED_REQUEST_STATUSES.includes(req.status)
+              ? `<span class="badge bg-success-subtle text-success border">${it.quantity_approved ?? it.quantity_requested} accordé(s)</span>`
+              : `<span class="text-muted small">${art.quantity ?? 0} en stock</span>`}</td>
+          </tr>`;
+      }).join('');
     }
   }
 
   const fullBody = document.getElementById('detailFullArticlesBody');
   if (fullBody) {
-    fullBody.innerHTML = '';
     if (items.length === 0) {
-      fullBody.innerHTML = '<tr><td colspan="7" class="text-center py-3 text-muted">Aucun article dans cette demande.</td></tr>';
+      fullBody.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-muted">${escHtml(req.service_description || 'Aucun article magasin associé (demande de service / maintenance / véhicule).')}</td></tr>`;
     } else {
-      items.forEach(it => {
+      fullBody.innerHTML = items.map(it => {
         const art = it.article || {};
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="fw-semibold text-primary">${art.code || '-'}</td>
-          <td>${art.name || 'Article'}</td>
-          <td><span class="badge bg-light text-dark border">${art.category || 'Général'}</span></td>
-          <td>${art.unit || 'unité(s)'}</td>
-          <td class="text-center fw-bold">${it.quantity_requested}</td>
-          <td class="text-center fw-bold text-success">${req.status === 'Approuvée' ? (it.quantity_validated || it.quantity_requested) : '-'}</td>
-          <td><span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> En stock</span></td>
-        `;
-        fullBody.appendChild(tr);
-      });
+        const stockOk = (art.quantity ?? 0) >= it.quantity_requested;
+        return `
+          <tr>
+            <td class="fw-semibold text-primary">${escHtml(art.code || '-')}</td>
+            <td>${escHtml(art.name || 'Article')}</td>
+            <td><span class="badge bg-light text-dark border">${escHtml(art.category || 'Général')}</span></td>
+            <td>${escHtml(art.unit || 'unité(s)')}</td>
+            <td class="text-center fw-bold">${it.quantity_requested}</td>
+            <td class="text-center fw-bold text-success">${AUTHORIZED_REQUEST_STATUSES.includes(req.status) ? (it.quantity_approved ?? it.quantity_requested) : '—'}</td>
+            <td><span class="badge-status ${stockOk ? 'badge-in-stock' : 'badge-low-stock'}"><span class="badge-status-dot"></span> ${art.quantity ?? 0} dispo</span></td>
+          </tr>`;
+      }).join('');
     }
   }
 
-  // Boutons actions
-  const btnCancel = document.getElementById('btnCollaboratorCancel');
-  if (btnCancel) {
-    btnCancel.onclick = () => cancelCollaboratorRequest(req.reference);
-    btnCancel.style.display = ['Brouillon', 'En attente', 'À corriger'].includes(req.status) ? 'inline-block' : 'none';
+  // Documents & pièces jointes
+  const docs = req.documents || [];
+  const tabDocsBtn = document.getElementById('detailTabDocsBtn');
+  if (tabDocsBtn) tabDocsBtn.textContent = `Documents & Bon (${docs.length})`;
+
+  const docsList = document.getElementById('detailRequestDocumentsList');
+  if (docsList) {
+    const canOpenBon = AUTHORIZED_REQUEST_STATUSES.includes(req.status);
+    let html = '';
+    if (canOpenBon) {
+      html += `
+        <div class="p-3 bg-success-subtle border border-success-subtle rounded d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div class="d-flex align-items-center gap-3">
+            <i class="bi bi-file-earmark-check-fill text-success fs-3"></i>
+            <div>
+              <strong class="d-block text-dark">Bon Officiel_${escHtml(req.reference)}.pdf</strong>
+              <small class="text-muted">Bon de sortie / exécution validé et signé numériquement</small>
+            </div>
+          </div>
+          <button type="button" class="btn-gp-primary btn-sm" onclick="openPdfModal('${escHtml(req.reference)}')"><i class="bi bi-printer"></i> Aperçu & Imprimer PDF</button>
+        </div>`;
+    }
+    if (docs.length === 0 && !canOpenBon) {
+      html = '<div class="p-3 bg-light border rounded text-muted small">Aucun document ni pièce jointe rattaché pour le moment.</div>';
+    } else {
+      html += docs.map(doc => `
+        <div class="p-2 px-3 bg-white border rounded d-flex justify-content-between align-items-center gap-2">
+          <div>
+            <strong class="text-dark small d-block">${escHtml(doc.title || doc.original_name)}</strong>
+            <small class="text-muted">${escHtml(doc.reference || doc.type || 'Pièce')} • ${escHtml(doc.file_size || '')} • ${formatDateShort(doc.created_at)}</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="downloadDocument(${doc.id}, '${escHtml(doc.original_name || doc.title)}')"><i class="bi bi-download"></i> Télécharger</button>
+        </div>`).join('');
+    }
+    docsList.innerHTML = html;
   }
 
+  // Bouton Bon PDF en-tête
+  const btnOpenPdfBon = document.getElementById('btnDetailOpenPdfBon');
+  if (btnOpenPdfBon) {
+    btnOpenPdfBon.style.display = AUTHORIZED_REQUEST_STATUSES.includes(req.status) ? 'inline-flex' : 'none';
+  }
+
+  // Boutons Demandeur
+  const isOwner = AppState.currentUser && Number(req.user_id) === Number(AppState.currentUser.id);
+  const btnEditResubmit = document.getElementById('btnRequesterEditResubmit');
+  if (btnEditResubmit) {
+    const editableStatuses = [
+      'Brouillon',
+      'À corriger',
+      'Soumise',
+      'En attente',
+      'En attente de vérification',
+      'En attente de validation',
+      'En attente de justification'
+    ];
+    const canEdit = (isOwner || AppState.isSuperAdmin) && editableStatuses.includes(req.status);
+    btnEditResubmit.style.display = canEdit ? 'inline-flex' : 'none';
+    btnEditResubmit.innerHTML = '<i class="bi bi-pencil-square me-1"></i> Modifier la demande';
+    btnEditResubmit.onclick = () => window.startEditRequest(req.reference);
+  }
+
+  const btnConfirmReceipt = document.getElementById('btnRequesterConfirmReceipt');
+  if (btnConfirmReceipt) {
+    const canConfirm = (isOwner || AppState.canManageOps)
+      && ['Exécutée', 'Livrée', 'Validée', 'Approuvée', 'En attente de justification'].includes(req.status)
+      && !req.received_at;
+    btnConfirmReceipt.style.display = canConfirm ? 'inline-flex' : 'none';
+    btnConfirmReceipt.onclick = async () => {
+      if (confirm(`Confirmez-vous la bonne réception du matériel / de la prestation pour ${req.reference} ?`)) {
+        await BackendApi.transitionRequest(req.reference, 'receive');
+      }
+    };
+  }
+
+  const btnCancel = document.getElementById('btnCollaboratorCancel');
+  if (btnCancel) {
+    const cancellable = ['Brouillon', 'À corriger', ...PENDING_REQUEST_STATUSES].includes(req.status) && (isOwner || AppState.isSuperAdmin);
+    btnCancel.style.display = cancellable ? 'inline-flex' : 'none';
+    btnCancel.onclick = () => openRequestReasonModal('cancel', req.reference);
+  }
+
+  // Actions Gestionnaire / Responsable
+  const isPending = PENDING_REQUEST_STATUSES.includes(req.status);
+  const isApprovable = isPending || req.status === 'En attente d\'approvisionnement';
+  const isAuthorizedActive = ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution', 'En attente d\'approvisionnement', 'En attente de justification'].includes(req.status);
   const actionVisibility = {
-    btnActionApprove: req.status === 'En attente',
-    btnActionCorrection: req.status === 'En attente',
-    btnActionReject: req.status === 'En attente',
-    btnActionDeliver: req.status === 'Approuvée',
-    btnActionReturn: ['Approuvée', 'Livrée'].includes(req.status),
-    btnActionClose: ['Livrée', 'Restituée'].includes(req.status)
+    btnActionVerify: isPending && req.status !== 'En attente de validation',
+    btnActionApprove: isApprovable,
+    btnActionCorrection: isPending,
+    btnActionAssign: !['Annulée', 'Rejetée', 'Clôturée', 'Brouillon'].includes(req.status),
+    btnActionExecInProgress: ['Validée', 'Approuvée', 'En attente d\'approvisionnement'].includes(req.status),
+    btnActionExecSupply: isPending || ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution'].includes(req.status),
+    btnActionDeliver: ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution'].includes(req.status),
+    btnActionExecJustification: isAuthorizedActive || ['Exécutée', 'Livrée'].includes(req.status),
+    btnActionReceive: ['Exécutée', 'Livrée', 'Validée', 'Approuvée', 'En attente de justification'].includes(req.status) && !req.received_at,
+    btnActionReturn: req.type_operation === 'Emprunt temporaire' && ['Validée', 'Approuvée', 'Exécutée', 'Livrée'].includes(req.status),
+    btnActionClose: ['Exécutée', 'Livrée', 'Restituée', 'Validée', 'Approuvée'].includes(req.status),
+    btnActionReject: isPending
   };
+
   Object.entries(actionVisibility).forEach(([id, visible]) => {
     const action = document.getElementById(id);
-    if (action) action.closest('li').style.display = visible ? '' : 'none';
+    if (action?.closest('li')) action.closest('li').style.display = visible ? '' : 'none';
   });
 
+  const hasManagerAction = Object.values(actionVisibility).some(Boolean);
+  const treatmentDropdown = document.getElementById('requestTreatmentDropdown');
+  if (treatmentDropdown) {
+    treatmentDropdown.style.setProperty('display', hasManagerAction && AppState.canManageOps ? '' : 'none', 'important');
+  }
+
+  // Historique complet
   const history = document.getElementById('detailRequestHistory');
   if (history) {
     const labels = {
-      created: 'Demande créée', submitted: 'Demande soumise', approved: 'Demande approuvée', cancelled: 'Demande annulée',
-      rejected: 'Demande rejetée', correction_requested: 'Correction demandée',
-      delivered: 'Matériel livré', returned: 'Matériel restitué', closed: 'Demande clôturée'
+      draft_saved: 'Brouillon enregistré',
+      created: 'Demande créée',
+      submitted: 'Demande soumise',
+      resubmitted: 'Compléments fournis & Demande re-soumise',
+      verified: 'Vérification effectuée',
+      approved: 'Demande validée & Bon généré',
+      assigned: 'Demande affectée à un agent',
+      execution_step: 'Étape d’exécution enregistrée',
+      executed: 'Demande exécutée / Matériel remis',
+      delivered: 'Matériel livré',
+      received: 'Réception confirmée',
+      returned: 'Matériel restitué en stock',
+      correction_requested: 'Demande de complément envoyée',
+      rejected: 'Demande rejetée',
+      cancelled: 'Demande annulée',
+      closed: 'Demande clôturée'
     };
     const decisions = req.decisions || [];
-    history.innerHTML = decisions.length ? decisions.map(decision => `
-      <li class="list-group-item d-flex justify-content-between align-items-center py-3 gap-3">
-        <div>
-          <span class="fw-semibold text-dark">${labels[decision.action] || decision.action}</span>
-          <div class="text-muted small">${decision.comment || `${decision.status_from || 'Création'} → ${decision.status_to}`}${decision.user?.name ? ` • ${decision.user.name}` : ''}</div>
-        </div>
-        <span class="text-muted small text-nowrap">${new Date(decision.created_at).toLocaleString('fr-FR')}</span>
-      </li>`).join('') : '<li class="list-group-item text-muted py-3">Aucun événement enregistré.</li>';
+    history.innerHTML = decisions.length
+      ? decisions.map(d => `
+        <li class="list-group-item d-flex justify-content-between align-items-start py-3 gap-3">
+          <div>
+            <span class="fw-semibold text-dark">${escHtml(labels[d.action] || d.action)}</span>
+            <span class="badge bg-light text-secondary border ms-2">${escHtml(d.status_from ? `${d.status_from} → ${d.status_to}` : d.status_to)}</span>
+            ${d.comment ? `<div class="text-dark small mt-1">${escHtml(d.comment)}</div>` : ''}
+            <div class="text-muted small mt-1">Par ${escHtml(d.user?.name || 'Système')}</div>
+          </div>
+          <span class="text-muted small text-nowrap">${formatDateTime(d.created_at)}</span>
+        </li>`).join('')
+      : '<li class="list-group-item text-muted py-3">Aucun événement enregistré.</li>';
   }
 
-  // Nom Bon PDF
-  const pdfName = document.getElementById('detailBonPdfName');
-  if (pdfName) pdfName.textContent = `Bon_de_Demande_${req.reference}.pdf`;
+  navigateToView('request-detail', false);
+  window.location.hash = `request-detail/${encodeURIComponent(req.reference)}`;
+}
 
-  navigateToView('request-detail');
+window.approveRequest = function (reference) {
+  openApproveRequestModal(reference);
+};
+
+function openApproveRequestModal(reference) {
+  if (!AppState.canManageOps) {
+    showToast('Seul un responsable, délégataire actif ou administrateur peut valider une demande.', 'danger');
+    return;
+  }
+  const req = (AppState.currentRequests || []).find(r => r.reference === reference);
+  if (!req) {
+    BackendApi.approveRequest(reference);
+    return;
+  }
+
+  AppState.selectedRequestRef = reference;
+  const refLabel = document.getElementById('approveModalRefLabel');
+  if (refLabel) refLabel.textContent = req.reference;
+  const commentEl = document.getElementById('approveModalComment');
+  if (commentEl) commentEl.value = '';
+
+  const tbody = document.getElementById('approveModalItemsBody');
+  const wrapper = document.getElementById('approveModalItemsWrapper');
+  const items = req.items || [];
+  if (tbody && wrapper) {
+    if (items.length === 0) {
+      wrapper.style.display = 'none';
+      tbody.innerHTML = '';
+    } else {
+      wrapper.style.display = 'block';
+      tbody.innerHTML = items.map(it => {
+        const art = it.article || {};
+        const maxStock = art.quantity ?? it.quantity_requested;
+        const defaultGranted = Math.min(it.quantity_requested, Math.max(0, maxStock));
+        return `
+          <tr>
+            <td><strong>${escHtml(art.code || '')}</strong> ${escHtml(art.name || 'Article')}</td>
+            <td class="text-center"><span class="badge ${maxStock >= it.quantity_requested ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'}">${maxStock} ${escHtml(art.unit || '')}</span></td>
+            <td class="text-center fw-semibold">${it.quantity_requested}</td>
+            <td class="text-center">
+              <input type="number" class="form-control form-control-sm text-center js-approve-item-qty" data-item-id="${it.id}" min="0" max="${maxStock}" value="${defaultGranted}" required>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+  }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalApproveRequest')).show();
+}
+
+function openRequestReasonModal(actionType, reference) {
+  const modalEl = document.getElementById('modalRequestReason');
+  if (!modalEl) return;
+  document.getElementById('requestReasonActionType').value = actionType;
+  document.getElementById('requestReasonTargetRef').value = reference;
+  document.getElementById('requestReasonTextarea').value = '';
+
+  const titleEl = document.getElementById('requestReasonModalTitle');
+  const labelEl = document.getElementById('requestReasonLabel');
+  const submitBtn = document.getElementById('requestReasonSubmitBtn');
+
+  if (actionType === 'reject') {
+    if (titleEl) titleEl.textContent = `Rejeter la demande ${reference}`;
+    if (labelEl) labelEl.innerHTML = 'Motif du rejet (obligatoire) <span class="text-danger">*</span>';
+    if (submitBtn) { submitBtn.className = 'btn-gp-primary bg-danger border-danger'; submitBtn.textContent = 'Confirmer le rejet'; }
+  } else if (actionType === 'request-correction') {
+    if (titleEl) titleEl.textContent = `Demander un complément (${reference})`;
+    if (labelEl) labelEl.innerHTML = 'Précisions ou justificatifs attendus du demandeur <span class="text-danger">*</span>';
+    if (submitBtn) { submitBtn.className = 'btn-gp-primary'; submitBtn.textContent = 'Envoyer la demande de complément'; }
+  } else {
+    if (titleEl) titleEl.textContent = `Annuler la demande ${reference}`;
+    if (labelEl) labelEl.innerHTML = 'Motif de l’annulation (obligatoire) <span class="text-danger">*</span>';
+    if (submitBtn) { submitBtn.className = 'btn-gp-primary bg-danger border-danger'; submitBtn.textContent = 'Confirmer l’annulation'; }
+  }
+
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
 async function openPdfModal(reference) {
@@ -879,12 +1492,8 @@ async function openPdfModal(reference) {
   }
 
   let req = (AppState.currentRequests || []).find(r => r.reference === reference);
-
   try {
-    const response = await fetch(`/api/requests/${encodeURIComponent(reference)}`, {
-      headers: { 'Accept': 'application/json' }
-    });
-
+    const response = await fetch(`/api/requests/${encodeURIComponent(reference)}`);
     if (response.ok) {
       const result = await response.json();
       if (result.success && result.data) req = result.data;
@@ -898,57 +1507,50 @@ async function openPdfModal(reference) {
     return false;
   }
 
-  if (!['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status)) {
-    showToast('Le bon est disponible uniquement après l’approbation de la demande.', 'warning');
+  if (!AUTHORIZED_REQUEST_STATUSES.includes(req.status)) {
+    showToast('Le bon officiel est disponible uniquement après la validation de la demande.', 'warning');
     return false;
   }
 
-  const refEl = document.getElementById('pdfModalRef');
-  if (refEl) refEl.textContent = req.reference;
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Administrative & Logistique';
+  const orgAddress = AppState.catalogRefs?.settings?.company_address || 'Abidjan, Côte d’Ivoire';
+  const orgPhone = AppState.catalogRefs?.settings?.company_phone || '';
 
-  const dateEl = document.getElementById('pdfModalDate');
-  const documentDate = req.approved_at || req.created_at;
-  const d = documentDate ? new Date(documentDate).toLocaleDateString('fr-FR', {day: '2-digit', month: 'long', year: 'numeric'}) : new Date().toLocaleDateString('fr-FR');
-  if (dateEl) dateEl.textContent = `Émis le : ${d}`;
+  const pdfOrgTitle = document.getElementById('pdfOrgTitle');
+  if (pdfOrgTitle) pdfOrgTitle.innerHTML = `<i class="bi bi-layers-half"></i> ${escHtml(orgName)}`;
+  const pdfOrgAddr = document.getElementById('pdfOrgAddressBlock');
+  if (pdfOrgAddr) pdfOrgAddr.textContent = [orgAddress, orgPhone].filter(Boolean).join(' • ');
+  const stamp = document.getElementById('pdfStatusStamp');
+  if (stamp) stamp.textContent = req.status.toUpperCase();
 
-  const demandeurEl = document.getElementById('pdfModalDemandeur');
-  if (demandeurEl) demandeurEl.textContent = req.user?.name || 'Demandeur';
-
-  const srvEl = document.getElementById('pdfModalService');
-  if (srvEl) srvEl.textContent = req.service || 'Direction Générale';
-
-  const motifEl = document.getElementById('pdfModalMotif');
-  if (motifEl) motifEl.textContent = req.motif || 'Dotation de matériel';
-
-  const typeEl = document.getElementById('pdfModalType');
-  if (typeEl) typeEl.textContent = req.type_operation || 'Dotation & Approvisionnement';
-
-  const sigCollab = document.getElementById('pdfSignatureCollaborator');
-  if (sigCollab) sigCollab.textContent = `Signé numériquement par ${req.user?.name || 'le demandeur'}`;
-
-  const sigAdmin = document.getElementById('pdfSignatureAdmin');
-  if (sigAdmin) sigAdmin.textContent = `Visé & Validé par ${req.approver?.name || 'le Gestionnaire de stock'}`;
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('pdfModalRef', req.reference);
+  setTxt('pdfModalDate', `Émis le : ${formatDateShort(req.approved_at || req.created_at)}`);
+  setTxt('pdfModalDemandeur', req.user?.name || 'Demandeur');
+  setTxt('pdfModalService', req.service || 'Direction Générale');
+  setTxt('pdfModalMotif', req.motif || 'Dotation interne');
+  setTxt('pdfModalType', `${req.category || req.type_operation || 'Demande interne'} (${req.type_operation || 'Dotation'})`);
+  setTxt('pdfSignatureCollaborator', `Signé numériquement par ${req.user?.name || 'le demandeur'}${req.received_at ? ` (Réception confirmée le ${formatDateShort(req.received_at)})` : ''}`);
+  setTxt('pdfSignatureAdmin', `Validé par ${req.approver?.name || 'le Responsable habilité'}`);
 
   const tbody = document.getElementById('pdfModalArticlesBody');
   if (tbody) {
-    tbody.innerHTML = '';
     const items = req.items || [];
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center py-3 text-muted">Aucun article spécifié.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-3 text-dark">${escHtml(req.service_description || req.motif || 'Prestation / intervention validée')}</td></tr>`;
     } else {
-      items.forEach(it => {
+      tbody.innerHTML = items.map(it => {
         const art = it.article || {};
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><strong>${art.code || '-'}</strong></td>
-          <td>${art.name || 'Article'}</td>
-          <td>${art.category || 'Fournitures'}</td>
-          <td>${art.unit || 'unité'}</td>
-          <td class="text-center">${it.quantity_requested}</td>
-          <td class="text-center fw-bold text-success">${it.quantity_approved || it.quantity_requested}</td>
-        `;
-        tbody.appendChild(tr);
-      });
+        return `
+          <tr>
+            <td><strong>${escHtml(art.code || '-')}</strong></td>
+            <td>${escHtml(art.name || 'Article')}</td>
+            <td>${escHtml(art.category || 'Fournitures')}</td>
+            <td>${escHtml(art.unit || 'unité')}</td>
+            <td class="text-center">${it.quantity_requested}</td>
+            <td class="text-center fw-bold text-success">${it.quantity_approved ?? it.quantity_requested}</td>
+          </tr>`;
+      }).join('');
     }
   }
 
@@ -957,819 +1559,2469 @@ async function openPdfModal(reference) {
 
   const modalEl = document.getElementById('modalOfficialPdf');
   if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).show();
-
   return true;
 }
 
-function setupModalsAndActions() {
-  // Bouton de rafraîchissement manuel dans la Topbar
-  const btnTopRefresh = document.getElementById('topbarBtnRefresh');
-  if (btnTopRefresh) {
-    btnTopRefresh.addEventListener('click', () => {
-      if (typeof BackendApi !== 'undefined') {
-        BackendApi.refreshAll({ showIndicator: true, silent: false });
-      }
-    });
+/* ==========================================================================
+   3. Module 3 : Articles, Réapprovisionnement & Inventaires Physiques
+   ========================================================================== */
+function resetArticleFormMode() {
+  const form = document.getElementById('formNewArticle');
+  if (!form) return;
+  form.reset();
+  delete form.dataset.articleId;
+
+  const codeWrapper = document.getElementById('artCodePreviewWrapper');
+  const catWrapper = document.getElementById('artCategoryWrapper');
+  const codePreview = document.getElementById('artCodePreview');
+  const title = document.getElementById('articleModalTitle');
+  const quantityLabel = document.getElementById('articleQuantityLabel');
+  const submitButton = document.getElementById('articleSubmitButton');
+  if (codeWrapper) codeWrapper.style.display = 'none';
+  if (catWrapper) catWrapper.className = 'col-12';
+  if (codePreview) codePreview.textContent = '-';
+  if (title) title.textContent = 'Ajouter un nouvel article en stock';
+  if (quantityLabel) quantityLabel.textContent = 'Quantité initiale';
+  if (submitButton) submitButton.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Créer l’article';
+}
+
+window.openEditArticle = async function (articleId) {
+  if (!AppState.canManageOps) {
+    showToast('Action restreinte aux responsables et administrateurs.', 'danger');
+    return;
   }
 
-  // Actions de validation, restitution et rejet de la demande
-  const btnApprove = document.getElementById('btnActionApprove');
-  const btnReject = document.getElementById('btnActionReject');
-  const btnCorrection = document.getElementById('btnActionCorrection');
-  const btnDeliver = document.getElementById('btnActionDeliver');
-  const btnReturn = document.getElementById('btnActionReturn');
-  const btnClose = document.getElementById('btnActionClose');
+  let article = AppState.currentArticles.find(item => Number(item.id) === Number(articleId));
+  if (!article) {
+    try {
+      const response = await fetch(`/api/articles/${articleId}`);
+      const result = await response.json();
+      if (response.ok && result.success) article = result.data;
+    } catch (error) {
+      console.warn('Chargement de l’article impossible :', error);
+    }
+  }
+  if (!article) {
+    showToast('Impossible de charger cet article.', 'danger');
+    return;
+  }
+
+  const form = document.getElementById('formNewArticle');
+  if (!form) return;
+  form.dataset.articleId = article.id;
+
+  const codeWrapper = document.getElementById('artCodePreviewWrapper');
+  const catWrapper = document.getElementById('artCategoryWrapper');
+  const codePreview = document.getElementById('artCodePreview');
+  if (codeWrapper) codeWrapper.style.display = '';
+  if (catWrapper) catWrapper.className = 'col-6';
+  if (codePreview) codePreview.textContent = article.code;
+  document.getElementById('artCategory').value = article.category;
+  document.getElementById('artName').value = article.name;
+  document.getElementById('artUnit').value = article.unit;
+  document.getElementById('artQty').value = article.quantity;
+  document.getElementById('artThreshold').value = article.threshold;
+  document.getElementById('artLocation').value = article.location || '';
+  document.getElementById('artMaximumThreshold').value = article.maximum_threshold || '';
+  document.getElementById('artUnitCost').value = article.unit_cost || '';
+  document.getElementById('artSupplier').value = article.supplier || '';
+
+  const title = document.getElementById('articleModalTitle');
+  const quantityLabel = document.getElementById('articleQuantityLabel');
+  const submitButton = document.getElementById('articleSubmitButton');
+  if (title) title.textContent = `Modifier la fiche ${article.code}`;
+  if (quantityLabel) quantityLabel.textContent = 'Quantité actuelle';
+  if (submitButton) submitButton.innerHTML = '<i class="bi bi-check-circle me-1"></i> Enregistrer les modifications';
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNewArticle')).show();
+};
+
+window.deleteArticle = async function (articleId, articleName) {
+  if (!AppState.isSuperAdmin) {
+    showToast('Seul l’administrateur peut supprimer une fiche article.', 'danger');
+    return;
+  }
+  if (!confirm(`Supprimer l’article "${articleName}" du catalogue ?`)) return;
+  try {
+    const res = await fetch(`/api/articles/${articleId}`, { method: 'DELETE' });
+    const data = await res.json();
+    showToast(data.message || (res.ok ? 'Article supprimé.' : 'Suppression refusée.'), res.ok ? 'success' : 'danger');
+    if (res.ok) await BackendApi.refreshAll({ showIndicator: true, silent: true });
+  } catch (e) {
+    showToast('Impossible de supprimer cet article pour le moment.', 'danger');
+  }
+};
+
+async function openReplenishmentModal() {
+  try {
+    const res = await fetch('/api/articles-replenishment');
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      showToast(json.message || 'Impossible de générer l’état de réapprovisionnement.', 'danger');
+      return;
+    }
+
+    const totalEl = document.getElementById('replenishmentEstimatedTotal');
+    if (totalEl) totalEl.textContent = `Coût estimatif total : ${formatCurrency(json.total_estimated_cost || 0)}`;
+
+    const tbody = document.getElementById('replenishmentTableBody');
+    if (tbody) {
+      const items = json.data || [];
+      tbody.innerHTML = items.length
+        ? items.map(it => `
+          <tr>
+            <td class="fw-bold text-primary">${escHtml(it.code)}</td>
+            <td>
+              <strong>${escHtml(it.name)}</strong>
+              <small class="d-block text-muted">${escHtml(it.category)} • ${escHtml(it.location || 'Magasin')}</small>
+            </td>
+            <td>${escHtml(it.supplier || '—')}</td>
+            <td class="text-center"><span class="badge ${it.quantity <= 0 ? 'bg-danger' : 'bg-warning text-dark'}">${it.quantity} ${escHtml(it.unit)}</span></td>
+            <td class="text-center">${it.threshold} / ${it.maximum_threshold}</td>
+            <td class="text-center fw-bold text-primary">+${it.suggested_order_quantity} ${escHtml(it.unit)}</td>
+            <td class="text-end fw-semibold">${formatCurrency(it.estimated_order_cost)}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="7" class="text-center text-success py-4"><i class="bi bi-check-circle me-1"></i>Tous les articles sont au-dessus de leur seuil minimal. Aucun réapprovisionnement requis.</td></tr>';
+    }
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalReplenishment')).show();
+  } catch (e) {
+    showToast('Impossible de charger l’état de réapprovisionnement.', 'danger');
+  }
+}
+
+function addInventoryCountingRow(article) {
+  const tbody = document.getElementById('inventoryCountingTableBody');
+  if (!tbody || !article) return;
+
+  if (tbody.querySelector(`[data-inv-article-id="${article.id}"]`)) {
+    showToast(`L’article ${article.code} figure déjà dans la grille de comptage.`, 'info');
+    return;
+  }
+
+  if (tbody.querySelector('td[colspan]')) {
+    tbody.innerHTML = '';
+  }
+
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-inv-article-id', article.id);
+  tr.setAttribute('data-theoretical-qty', article.quantity);
+  tr.innerHTML = `
+    <td><strong>${escHtml(article.code)}</strong> — ${escHtml(article.name)} <small class="text-muted">(${escHtml(article.unit)})</small></td>
+    <td class="text-center fw-semibold">${article.quantity}</td>
+    <td class="text-center">
+      <input type="number" class="form-control form-control-sm text-center js-inv-physical-qty" min="0" value="${article.quantity}" required>
+    </td>
+    <td class="text-center fw-bold js-inv-variance-cell text-muted">0</td>
+    <td>
+      <input type="text" class="form-control form-control-sm js-inv-justification" placeholder="Motif obligatoire si écart ≠ 0">
+    </td>
+    <td class="text-end">
+      <button type="button" class="btn-gp-icon text-danger js-remove-inv-row" title="Retirer"><i class="bi bi-trash"></i></button>
+    </td>
+  `;
+
+  const qtyInput = tr.querySelector('.js-inv-physical-qty');
+  const varCell = tr.querySelector('.js-inv-variance-cell');
+  const justifInput = tr.querySelector('.js-inv-justification');
+  const updateVariance = () => {
+    const phys = parseInt(qtyInput.value, 10) || 0;
+    const diff = phys - Number(article.quantity);
+    varCell.textContent = diff > 0 ? `+${diff}` : String(diff);
+    varCell.className = `text-center fw-bold js-inv-variance-cell ${diff === 0 ? 'text-muted' : (diff > 0 ? 'text-success' : 'text-danger')}`;
+    justifInput.required = diff !== 0;
+  };
+  qtyInput.addEventListener('input', updateVariance);
+  tr.querySelector('.js-remove-inv-row').addEventListener('click', () => {
+    tr.remove();
+    if (!tbody.children.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Sélectionnez un article ou cliquez sur « Charger tout le stock » pour saisir le comptage physique.</td></tr>';
+    }
+  });
+
+  tbody.appendChild(tr);
+}
+
+window.openInventoryDetailModal = function (inventoryId) {
+  const inv = (AppState.currentInventories || []).find(i => Number(i.id) === Number(inventoryId));
+  if (!inv) return;
+
+  const titleEl = document.getElementById('inventoryDetailModalTitle');
+  const bodyEl = document.getElementById('inventoryDetailModalBody');
+  const btnValidate = document.getElementById('btnModalValidateInventory');
+  if (titleEl) titleEl.textContent = `Inventaire ${inv.reference} (${inv.scope}) — ${inv.status}`;
+
+  const items = inv.items || [];
+  if (bodyEl) {
+    bodyEl.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap gap-2 mb-3 small text-muted">
+        <span>Date : <strong>${formatDateShort(inv.inventory_date)}</strong></span>
+        <span>Créé par : <strong>${escHtml(inv.creator?.name || 'Gestionnaire')}</strong></span>
+        ${inv.validator?.name ? `<span>Validé par : <strong>${escHtml(inv.validator.name)}</strong></span>` : ''}
+      </div>
+      ${inv.notes ? `<div class="alert alert-light border py-2 small mb-3">${escHtml(inv.notes)}</div>` : ''}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr><th>Article</th><th class="text-center">Théorique</th><th class="text-center">Physique</th><th class="text-center">Écart</th><th>Justification</th></tr>
+          </thead>
+          <tbody>
+            ${items.map(it => {
+              const v = Number(it.variance || 0);
+              return `<tr>
+                <td><strong>${escHtml(it.article?.code || '')}</strong> ${escHtml(it.article?.name || '')}</td>
+                <td class="text-center">${it.theoretical_quantity}</td>
+                <td class="text-center fw-bold">${it.physical_quantity}</td>
+                <td class="text-center fw-bold ${v === 0 ? 'text-muted' : (v > 0 ? 'text-success' : 'text-danger')}">${v > 0 ? `+${v}` : v}</td>
+                <td class="small">${escHtml(it.justification || '—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  if (btnValidate) {
+    if (inv.status === 'En attente de validation') {
+      btnValidate.style.display = 'inline-flex';
+      btnValidate.onclick = async () => {
+        await window.validateInventory(inv.id);
+        bootstrap.Modal.getInstance(document.getElementById('modalInventoryDetail'))?.hide();
+      };
+    } else {
+      btnValidate.style.display = 'none';
+    }
+  }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalInventoryDetail')).show();
+};
+
+window.validateInventory = async inventoryId => {
+  const response = await fetch(`/api/inventories/${inventoryId}/validate`, { method: 'PUT' });
+  const data = await response.json();
+  showToast(data.message || (response.ok ? 'Inventaire validé.' : 'Validation impossible.'), response.ok ? 'success' : 'danger');
+  if (response.ok) await BackendApi.refreshAll({ showIndicator: true, silent: true });
+};
+
+/* ==========================================================================
+   4. Module 4 : Gestion Complète d'un Bien du Patrimoine (Modal polyvalente)
+   ========================================================================== */
+window.openAssetModal = function (assetId, mode = 'history') {
+  const asset = (AppState.currentAssets || []).find(a => Number(a.id) === Number(assetId));
+  if (!asset) return;
+
+  const titleEl = document.getElementById('assetModalTitle');
+  const bodyEl = document.getElementById('assetModalBody');
+  const modalEl = document.getElementById('modalAssetAction');
+  if (!bodyEl || !modalEl) return;
+
+  const userOptions = (AppState.currentAssignees || [])
+    .map(u => `<option value="${u.id}" ${Number(asset.assigned_user_id) === Number(u.id) ? 'selected' : ''}>${escHtml(u.name)} (${escHtml(u.service || 'Agent')})</option>`)
+    .join('');
+
+  if (mode === 'edit') {
+    if (titleEl) titleEl.textContent = `Modifier la fiche ${asset.inventory_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormEditAsset" class="row g-3">
+        <div class="col-md-6"><label class="form-label small fw-semibold">Désignation</label><input name="name" class="form-control" value="${escHtml(asset.name)}" required></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Catégorie</label><input name="category" class="form-control" value="${escHtml(asset.category)}" required></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">N° de série</label><input name="serial_number" class="form-control" value="${escHtml(asset.serial_number || '')}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">État physique</label>
+          <select name="condition" class="form-select">
+            ${['Neuf', 'Bon état', 'Endommagé', 'Hors service'].map(c => `<option value="${c}" ${asset.condition === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Coût d’acquisition</label><input name="acquisition_cost" type="number" step="0.01" min="0" class="form-control" value="${asset.acquisition_cost || ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Date d’acquisition</label><input name="acquired_at" type="date" class="form-control" value="${asset.acquired_at ? String(asset.acquired_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Service</label><input name="department" class="form-control" value="${escHtml(asset.department || '')}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Site / Bureau</label><input name="location" class="form-control" value="${escHtml(asset.location || '')}"></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Observations</label><textarea name="notes" class="form-control" rows="2">${escHtml(asset.notes || '')}</textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormEditAsset').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const res = await fetch(`/api/assets/${asset.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Fiche mise à jour.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'assign') {
+    if (titleEl) titleEl.textContent = `Remise / Affectation — ${asset.inventory_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormAssignAsset" class="row g-3">
+        <div class="col-md-6"><label class="form-label small fw-semibold">Employé détenteur</label><select name="user_id" class="form-select"><option value="">Affectation au service uniquement</option>${userOptions}</select></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Service / Département</label><input name="department" class="form-control" value="${escHtml(asset.department || '')}" placeholder="Ex: Informatique & SI"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Site / Bureau</label><input name="location" class="form-control" value="${escHtml(asset.location || '')}" placeholder="Ex: Bureau 202"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">État à la remise</label>
+          <select name="condition" class="form-select">
+            ${['Neuf', 'Bon état', 'Endommagé'].map(c => `<option value="${c}" ${asset.condition === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-12"><label class="form-label small fw-semibold">Notes de remise</label><textarea name="notes" class="form-control" rows="2" placeholder="Accessoires fournis, état constaté..."></textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Confirmer la remise</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormAssignAsset').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries([...new FormData(e.currentTarget).entries()].filter(([, v]) => v !== ''));
+      const res = await fetch(`/api/assets/${asset.id}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Affectation enregistrée.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'return') {
+    if (titleEl) titleEl.textContent = `Restitution d’équipement — ${asset.inventory_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormReturnAsset" class="row g-3">
+        <div class="col-md-6"><label class="form-label small fw-semibold">État constaté au retour</label>
+          <select name="condition" class="form-select">
+            ${['Neuf', 'Bon état', 'Endommagé', 'Hors service'].map(c => `<option value="${c}" ${asset.condition === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Emplacement de rangement</label><input name="location" class="form-control" value="${escHtml(asset.location || 'Magasin Central')}"></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Observations de restitution</label><textarea name="notes" class="form-control" rows="2" placeholder="Motif du retour, état général..."></textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer la restitution</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormReturnAsset').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const res = await fetch(`/api/assets/${asset.id}/return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Restitution enregistrée.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'incident') {
+    if (titleEl) titleEl.textContent = `Signaler un incident — ${asset.inventory_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormAssetIncident" class="row g-3">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Gravité <span class="text-danger">*</span></label>
+          <select name="severity" class="form-select" required>
+            <option value="Mineur">Mineur</option>
+            <option value="Majeur">Majeur (Bien endommagé)</option>
+            <option value="Critique">Critique (Hors service)</option>
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Date du constat</label><input type="date" name="incident_date" class="form-control" value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Référence incident</label><div class="form-control bg-light text-muted small">Auto (INC-...)</div></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Objet du dysfonctionnement <span class="text-danger">*</span></label><input name="title" class="form-control" required placeholder="Ex: Écran fissuré, panne d’alimentation..."></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Description circonstanciée <span class="text-danger">*</span></label><textarea name="description" class="form-control" rows="3" required></textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary bg-danger border-danger">Enregistrer l’incident</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormAssetIncident').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const res = await fetch(`/api/assets/${asset.id}/incidents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Incident enregistré.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'maintenance') {
+    if (titleEl) titleEl.textContent = `Maintenance / Réparation — ${asset.inventory_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormAssetMaint" class="row g-3">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Type d’intervention</label>
+          <select name="type" class="form-select"><option value="Maintenance préventive">Maintenance préventive</option><option value="Réparation">Réparation</option><option value="Remplacement pièce">Remplacement pièce</option></select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Statut</label>
+          <select name="status" class="form-select"><option value="Planifiée">Planifiée</option><option value="En cours">En cours</option><option value="Terminée">Terminée</option></select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Coût (FCFA)</label><input type="number" name="cost" min="0" step="0.01" value="0" class="form-control"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Prestataire / Technicien</label><input name="provider" list="datalistSuppliers" class="form-control" placeholder="Nom du prestataire"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Date d’intervention</label><input type="date" name="scheduled_at" class="form-control" value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Travaux effectués / prévus <span class="text-danger">*</span></label><textarea name="description" class="form-control" rows="2" required></textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer l’intervention</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormAssetMaint').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = { ...Object.fromEntries(new FormData(e.currentTarget).entries()), resource_type: 'asset', resource_id: asset.id };
+      const res = await fetch('/api/maintenance-records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Intervention enregistrée.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else {
+    // Historique complet (affectations, incidents, maintenances)
+    if (titleEl) titleEl.textContent = `Fiche & Historique — ${asset.inventory_number} (${asset.name})`;
+    const assignments = asset.assignments || [];
+    const incidents = asset.incidents || [];
+    const maintenances = asset.maintenance_records || [];
+    bodyEl.innerHTML = `
+      <div class="row g-2 mb-3 small">
+        <div class="col-md-4"><div class="p-2 bg-light rounded border"><strong>Catégorie :</strong> ${escHtml(asset.category)}<br><strong>Série :</strong> ${escHtml(asset.serial_number || '—')}</div></div>
+        <div class="col-md-4"><div class="p-2 bg-light rounded border"><strong>État :</strong> ${escHtml(asset.condition)}<br><strong>Disponibilité :</strong> ${escHtml(asset.availability)}</div></div>
+        <div class="col-md-4"><div class="p-2 bg-light rounded border"><strong>Acquisition :</strong> ${formatDateShort(asset.acquired_at)}<br><strong>Coût :</strong> ${formatCurrency(asset.acquisition_cost)}</div></div>
+      </div>
+
+      <h6 class="fw-bold mb-2"><i class="bi bi-arrow-left-right text-primary me-1"></i>Historique des affectations</h6>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm small">
+          <thead class="table-light"><tr><th>Détenteur / Service</th><th>Site</th><th>Remis le</th><th>Restitué le</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${assignments.length ? assignments.map(a => `<tr>
+              <td>${escHtml(a.user?.name || a.department || '—')}</td>
+              <td>${escHtml(a.location || '—')}</td>
+              <td>${formatDateTime(a.assigned_at)}</td>
+              <td>${a.returned_at ? formatDateTime(a.returned_at) : '<span class="badge bg-primary-subtle text-primary">En cours</span>'}</td>
+              <td>${escHtml(a.notes || '—')}</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted text-center">Aucune affectation enregistrée.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <h6 class="fw-bold mb-2"><i class="bi bi-exclamation-octagon text-danger me-1"></i>Incidents signalés (${incidents.length})</h6>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm small align-middle">
+          <thead class="table-light"><tr><th>Réf</th><th>Gravité & Objet</th><th>Date</th><th>Statut</th><th class="text-end">Action</th></tr></thead>
+          <tbody>
+            ${incidents.length ? incidents.map(inc => `<tr>
+              <td class="fw-bold">${escHtml(inc.reference)}</td>
+              <td><span class="badge bg-danger-subtle text-danger me-1">${escHtml(inc.severity)}</span> ${escHtml(inc.title)}<div class="text-muted">${escHtml(inc.description)}</div></td>
+              <td>${formatDateShort(inc.incident_date)}</td>
+              <td>${escHtml(inc.status)}</td>
+              <td class="text-end">${inc.status !== 'Résolu' ? `<button class="btn btn-sm btn-outline-success py-0 px-2" onclick="resolveAssetIncidentPrompt(${inc.id})">Résoudre</button>` : escHtml(inc.resolution_notes || 'Résolu')}</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted text-center">Aucun incident signalé.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <h6 class="fw-bold mb-2"><i class="bi bi-tools text-secondary me-1"></i>Maintenances & Réparations (${maintenances.length})</h6>
+      <div class="table-responsive">
+        <table class="table table-sm small">
+          <thead class="table-light"><tr><th>Type</th><th>Prestataire</th><th>Date</th><th>Coût</th><th>Statut</th></tr></thead>
+          <tbody>
+            ${maintenances.length ? maintenances.map(m => `<tr>
+              <td>${escHtml(m.type)}<div class="text-muted">${escHtml(m.description)}</div></td>
+              <td>${escHtml(m.provider || 'Interne')}</td>
+              <td>${formatDateShort(m.scheduled_at || m.created_at)}</td>
+              <td>${formatCurrency(m.cost)}</td>
+              <td>${escHtml(m.status)}</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-muted text-center">Aucune maintenance enregistrée.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};
+
+window.resolveAssetIncidentPrompt = async function (incidentId) {
+  const notes = prompt('Indiquez les actions correctives réalisées pour clôturer cet incident :', 'Réparation effectuée et équipement remis en bon état.');
+  if (!notes || !notes.trim()) return;
+  const res = await fetch(`/api/asset-incidents/${incidentId}/resolve`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution_notes: notes.trim(), asset_condition: 'Bon état' })
+  });
+  const data = await res.json();
+  showToast(data.message || 'Incident résolu.', res.ok ? 'success' : 'danger');
+  if (res.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalAssetAction'))?.hide();
+    await BackendApi.loadOperations();
+  }
+};
+
+/* ==========================================================================
+   5. Module 5 : Gestion Complète d'un Véhicule (Modal polyvalente)
+   ========================================================================== */
+window.openVehicleModal = function (vehicleId, mode = 'history') {
+  const vehicle = (AppState.currentVehicles || []).find(v => Number(v.id) === Number(vehicleId));
+  if (!vehicle) return;
+
+  const titleEl = document.getElementById('vehicleModalTitle');
+  const bodyEl = document.getElementById('vehicleModalBody');
+  const modalEl = document.getElementById('modalVehicleAction');
+  if (!bodyEl || !modalEl) return;
+
+  const driverOptions = (AppState.currentAssignees || [])
+    .map(u => `<option value="${u.id}" ${Number(vehicle.driver_id) === Number(u.id) ? 'selected' : ''}>${escHtml(u.name)} (${escHtml(u.service || '')})</option>`)
+    .join('');
+
+  if (mode === 'edit') {
+    if (titleEl) titleEl.textContent = `Mise à jour véhicule & kilométrage — ${vehicle.registration_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormEditVehicle" class="row g-3">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Immatriculation</label><input name="registration_number" class="form-control" value="${escHtml(vehicle.registration_number)}" required></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Marque</label><input name="brand" class="form-control" value="${escHtml(vehicle.brand)}" required></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Modèle</label><input name="model" class="form-control" value="${escHtml(vehicle.model)}" required></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Kilométrage actuel (km)</label><input type="number" name="mileage" min="0" class="form-control fw-bold" value="${vehicle.mileage || 0}" required></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">État</label>
+          <select name="status" class="form-select">
+            ${['Disponible', 'En service', 'Maintenance', 'Immobilisé'].map(s => `<option value="${s}" ${vehicle.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Conducteur</label><select name="driver_id" class="form-select"><option value="">Aucun conducteur</option>${driverOptions}</select></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Service affecté</label><input name="department" class="form-control" value="${escHtml(vehicle.department || '')}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Assurance expire le</label><input type="date" name="insurance_expires_at" class="form-control" value="${vehicle.insurance_expires_at ? String(vehicle.insurance_expires_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Visite technique expire le</label><input type="date" name="inspection_expires_at" class="form-control" value="${vehicle.inspection_expires_at ? String(vehicle.inspection_expires_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Vignette expire le</label><input type="date" name="tax_expires_at" class="form-control" value="${vehicle.tax_expires_at ? String(vehicle.tax_expires_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Prochain entretien (Date)</label><input type="date" name="next_maintenance_at" class="form-control" value="${vehicle.next_maintenance_at ? String(vehicle.next_maintenance_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Prochain entretien (Seuil Km)</label><input type="number" name="next_maintenance_mileage" min="0" class="form-control" value="${vehicle.next_maintenance_mileage || ''}"></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormEditVehicle').onsubmit = async (e) => {
+      e.preventDefault();
+      const raw = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const payload = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v === '' ? null : v]));
+      const res = await fetch(`/api/vehicles/${vehicle.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Véhicule mis à jour.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'documents') {
+    if (titleEl) titleEl.textContent = `Documents administratifs & Échéances — ${vehicle.registration_number}`;
+    const docs = vehicle.documents || [];
+    bodyEl.innerHTML = `
+      <form id="dynFormVehicleDoc" class="row g-2 p-3 bg-light border rounded mb-3" enctype="multipart/form-data">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Type de document</label>
+          <select name="document_type" class="form-select form-select-sm" required>
+            <option value="Attestation d'assurance">Attestation d'assurance</option>
+            <option value="Certificat de visite technique">Visite technique</option>
+            <option value="Vignette automobile">Vignette automobile</option>
+            <option value="Carte grise">Carte grise</option>
+            <option value="Autre document">Autre document</option>
+          </select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Date d’expiration</label><input type="date" name="expires_at" class="form-control form-control-sm"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Fichier (PDF / Image)</label><input type="file" name="file" class="form-control form-control-sm" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"></div>
+        <div class="col-md-9"><input name="notes" class="form-control form-control-sm" placeholder="Compagnie d’assurance, numéro de police..."></div>
+        <div class="col-md-3"><button type="submit" class="btn-gp-primary btn-sm w-100 justify-content-center"><i class="bi bi-plus"></i> Enregistrer</button></div>
+      </form>
+      <div class="table-responsive">
+        <table class="table table-sm small align-middle">
+          <thead class="table-light"><tr><th>Réf</th><th>Type</th><th>Expiration</th><th>Notes</th><th class="text-end">Fichier</th></tr></thead>
+          <tbody>
+            ${docs.length ? docs.map(d => `<tr>
+              <td class="fw-semibold">${escHtml(d.reference)}</td>
+              <td>${escHtml(d.document_type)}</td>
+              <td>${formatDateShort(d.expires_at)}</td>
+              <td>${escHtml(d.notes || '—')}</td>
+              <td class="text-end">${d.file_path ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="downloadAuthenticatedFile('/api/vehicle-documents/${d.id}/download', '${escHtml(d.original_name || d.reference)}')"><i class="bi bi-download"></i></button>` : '—'}</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="text-center text-muted py-3">Aucun document enregistré pour ce véhicule.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+    document.getElementById('dynFormVehicleDoc').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.currentTarget);
+      const res = await fetch(`/api/vehicles/${vehicle.id}/documents`, { method: 'POST', body: fd });
+      const data = await res.json();
+      showToast(data.message || 'Document enregistré.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'maintenance') {
+    if (titleEl) titleEl.textContent = `Entretien / Réparation — ${vehicle.registration_number}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormVehicleMaint" class="row g-3">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Nature de l’opération</label>
+          <select name="type" class="form-select"><option value="Vidange & Entretien périodique">Vidange & Entretien périodique</option><option value="Réparation mécanique">Réparation mécanique</option><option value="Pneumatiques / Freinage">Pneumatiques / Freinage</option><option value="Carrosserie / Climatisation">Carrosserie / Climatisation</option></select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Statut</label>
+          <select name="status" class="form-select"><option value="Planifiée">Planifiée</option><option value="En cours">En cours (immobilise le véhicule)</option><option value="Terminée">Terminée</option></select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Coût (FCFA)</label><input type="number" name="cost" min="0" step="0.01" value="0" class="form-control"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Prestataire / Garage</label><input name="provider" list="datalistSuppliers" class="form-control" placeholder="Garage agréé"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Kilométrage relevé</label><input type="number" name="mileage" min="0" class="form-control" value="${vehicle.mileage || 0}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Date prévue / réalisée</label><input type="date" name="scheduled_at" class="form-control" value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Prochain entretien (Date)</label><input type="date" name="next_maintenance_at" class="form-control" value="${vehicle.next_maintenance_at ? String(vehicle.next_maintenance_at).slice(0, 10) : ''}"></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Prochain entretien (Seuil Km)</label><input type="number" name="next_maintenance_mileage" min="0" class="form-control" value="${vehicle.next_maintenance_mileage || ''}"></div>
+        <div class="col-12"><label class="form-label small fw-semibold">Détail des opérations <span class="text-danger">*</span></label><textarea name="description" class="form-control" rows="2" required></textarea></div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormVehicleMaint').onsubmit = async (e) => {
+      e.preventDefault();
+      const raw = Object.fromEntries([...new FormData(e.currentTarget).entries()].filter(([, v]) => v !== ''));
+      const payload = { ...raw, resource_type: 'vehicle', resource_id: vehicle.id };
+      const res = await fetch('/api/maintenance-records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Opération enregistrée.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else {
+    if (titleEl) titleEl.textContent = `Historique & Coûts — ${vehicle.registration_number} (${vehicle.brand} ${vehicle.model})`;
+    const maintenances = vehicle.maintenance_records || [];
+    const totalCost = maintenances.reduce((s, m) => s + Number(m.cost || 0), 0);
+    bodyEl.innerHTML = `
+      <div class="d-flex justify-content-between flex-wrap gap-2 p-3 bg-light border rounded mb-3 small">
+        <span><strong>Kilométrage :</strong> ${Number(vehicle.mileage || 0).toLocaleString('fr-FR')} km</span>
+        <span><strong>Carte grise :</strong> ${escHtml(vehicle.registration_card_number || '—')}</span>
+        <span><strong>Cumul dépenses auto :</strong> <span class="text-primary fw-bold">${formatCurrency(totalCost)}</span></span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm small align-middle">
+          <thead class="table-light"><tr><th>Date</th><th>Intervention</th><th>Prestataire</th><th>Km</th><th>Coût</th><th>Statut</th><th class="text-end">Action</th></tr></thead>
+          <tbody>
+            ${maintenances.length ? maintenances.map(m => `<tr>
+              <td>${formatDateShort(m.completed_at || m.scheduled_at || m.created_at)}</td>
+              <td><strong>${escHtml(m.type)}</strong><div class="text-muted">${escHtml(m.description)}</div></td>
+              <td>${escHtml(m.provider || '—')}</td>
+              <td>${m.mileage ? `${Number(m.mileage).toLocaleString('fr-FR')} km` : '—'}</td>
+              <td class="fw-semibold">${formatCurrency(m.cost)}</td>
+              <td>${escHtml(m.status)}</td>
+              <td class="text-end">${m.status !== 'Terminée' ? `<button class="btn btn-sm btn-outline-success py-0 px-2" onclick="completeVehicleMaintenance(${m.id})">Terminer</button>` : '—'}</td>
+            </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">Aucun entretien ou réparation enregistré.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};
+
+window.completeVehicleMaintenance = async function (maintId) {
+  const res = await fetch(`/api/maintenance-records/${maintId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Terminée' })
+  });
+  const data = await res.json();
+  showToast(data.message || 'Intervention clôturée.', res.ok ? 'success' : 'danger');
+  if (res.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('modalVehicleAction'))?.hide();
+    await BackendApi.loadOperations();
+  }
+};
+
+/* ==========================================================================
+   6. Module 6 : Suivi Financier, Contrôle, Dépassements & Justificatifs
+   ========================================================================== */
+window.openExpenseModal = function (expenseId, mode = 'detail') {
+  const exp = (AppState.currentExpenses || []).find(e => Number(e.id) === Number(expenseId));
+  if (!exp) return;
+
+  const titleEl = document.getElementById('expenseModalTitle');
+  const bodyEl = document.getElementById('expenseModalBody');
+  const modalEl = document.getElementById('modalExpenseAction');
+  if (!bodyEl || !modalEl) return;
+
+  if (mode === 'edit') {
+    const isProtected = exp.status === 'Validé';
+    if (titleEl) titleEl.textContent = `Suivi d’exécution / Décaissement — ${exp.reference}`;
+    bodyEl.innerHTML = `
+      ${isProtected ? '<div class="alert alert-warning py-2 small"><i class="bi bi-shield-lock me-1"></i>Cette dépense est déjà validée. Toute révision requiert un motif explicite et sera tracée dans l’historique financier.</div>' : ''}
+      <form id="dynFormUpdateExpense" class="row g-3">
+        <div class="col-md-4"><label class="form-label small fw-semibold">Montant autorisé</label><div class="form-control bg-light fw-bold">${formatCurrency(exp.authorized_amount)}</div></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Montant engagé</label><input type="number" step="0.01" min="0" name="committed_amount" class="form-control" value="${exp.committed_amount || 0}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Montant décaissé</label><input type="number" step="0.01" min="0" name="disbursed_amount" class="form-control" value="${exp.disbursed_amount || 0}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Montant justifié</label><input type="number" step="0.01" min="0" name="justified_amount" class="form-control" value="${exp.justified_amount || 0}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Bénéficiaire</label><input name="beneficiary" class="form-control" value="${escHtml(exp.beneficiary || '')}"></div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Mode de paiement</label>
+          <select name="payment_method" class="form-select">
+            ${['Espèces', 'Virement bancaire', 'Chèque', 'Mobile Money', 'Carte entreprise'].map(m => `<option value="${m}" ${exp.payment_method === m ? 'selected' : ''}>${m}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-12"><label class="form-label small fw-semibold">Motif de mise à jour / révision ${isProtected ? '<span class="text-danger">*</span>' : ''}</label>
+          <input name="amendment_reason" class="form-control" ${isProtected ? 'required' : ''} placeholder="Ex: Réception facture définitive, décaissement solde fournisseur...">
+        </div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary">Enregistrer & Historiser</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormUpdateExpense').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const res = await fetch(`/api/expenses/${exp.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Opération mise à jour.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else if (mode === 'validate') {
+    const suggestedAuth = Math.max(Number(exp.authorized_amount || 0), Number(exp.committed_amount || 0), Number(exp.disbursed_amount || 0));
+    if (titleEl) titleEl.textContent = `Contrôle & Validation financière — ${exp.reference}`;
+    bodyEl.innerHTML = `
+      <form id="dynFormValidateExpense" class="row g-3">
+        <div class="col-12">
+          <p class="small text-muted mb-1">Engagé : <strong>${formatCurrency(exp.committed_amount)}</strong> • Décaissé : <strong>${formatCurrency(exp.disbursed_amount)}</strong> • Justifié : <strong>${formatCurrency(exp.justified_amount)}</strong></p>
+        </div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Plafond / Montant autorisé validé <span class="text-danger">*</span></label>
+          <input type="number" step="0.01" min="0" name="authorized_amount" class="form-control fw-bold" value="${suggestedAuth}" required>
+        </div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Observation de contrôle</label>
+          <input name="notes" class="form-control" placeholder="Visa conforme des pièces et montants">
+        </div>
+        <div class="col-12 d-flex justify-content-end gap-2">
+          <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+          <button type="submit" class="btn-gp-primary bg-success border-success"><i class="bi bi-check-lg"></i> Valider la dépense</button>
+        </div>
+      </form>`;
+    document.getElementById('dynFormValidateExpense').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const res = await fetch(`/api/expenses/${exp.id}/validate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      showToast(data.message || 'Dépense validée.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  } else {
+    if (titleEl) titleEl.textContent = `Pièces justificatives & Historique financier — ${exp.reference}`;
+    const attachments = exp.attachments || [];
+    const audits = exp.audits || [];
+    bodyEl.innerHTML = `
+      <form id="dynFormExpenseAttach" class="row g-2 p-3 bg-light border rounded mb-3" enctype="multipart/form-data">
+        <div class="col-md-3"><label class="form-label small fw-semibold">Nature</label>
+          <select name="document_type" class="form-select form-select-sm"><option value="Facture">Facture</option><option value="Reçu">Reçu</option><option value="Bon de livraison">Bon de livraison</option><option value="Devis">Devis</option></select>
+        </div>
+        <div class="col-md-4"><label class="form-label small fw-semibold">Fichier justificatif <span class="text-danger">*</span></label>
+          <input type="file" name="file" class="form-control form-control-sm" required accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
+        </div>
+        <div class="col-md-3"><label class="form-label small fw-semibold">Montant justifié cumulé</label>
+          <input type="number" step="0.01" min="0" name="justified_amount" class="form-control form-control-sm" value="${exp.justified_amount || exp.disbursed_amount || 0}">
+        </div>
+        <div class="col-md-2 d-flex align-items-end"><button type="submit" class="btn-gp-primary btn-sm w-100 justify-content-center">Joindre</button></div>
+      </form>
+
+      <h6 class="fw-bold mb-2">Pièces justificatives rattachées (${attachments.length})</h6>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm small align-middle">
+          <thead class="table-light"><tr><th>Type</th><th>Document</th><th>Taille</th><th class="text-end">Télécharger</th></tr></thead>
+          <tbody>
+            ${attachments.length ? attachments.map(a => `<tr>
+              <td><span class="badge bg-light text-dark border">${escHtml(a.document_type)}</span></td>
+              <td>${escHtml(a.title || a.original_name)}</td>
+              <td>${escHtml(a.file_size || '')}</td>
+              <td class="text-end"><button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="downloadAuthenticatedFile('/api/expense-attachments/${a.id}/download', '${escHtml(a.original_name)}')"><i class="bi bi-download"></i></button></td>
+            </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted">Aucun justificatif joint.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <h6 class="fw-bold mb-2">Historique financier avant / après (${audits.length})</h6>
+      <div class="table-responsive">
+        <table class="table table-sm small">
+          <thead class="table-light"><tr><th>Date</th><th>Auteur</th><th>Action</th><th>Motif & Trace</th></tr></thead>
+          <tbody>
+            ${audits.length ? audits.map(au => `<tr>
+              <td class="text-nowrap">${formatDateTime(au.created_at)}</td>
+              <td>${escHtml(au.user?.name || 'Système')}</td>
+              <td><span class="badge bg-secondary-subtle text-secondary">${escHtml(au.action)}</span></td>
+              <td>${escHtml(au.reason || '—')}</td>
+            </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted">Aucune trace.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+    document.getElementById('dynFormExpenseAttach').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.currentTarget);
+      const res = await fetch(`/api/expenses/${exp.id}/attachments`, { method: 'POST', body: fd });
+      const data = await res.json();
+      showToast(data.message || 'Justificatif ajouté.', res.ok ? 'success' : 'danger');
+      if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
+    };
+  }
+
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+};
+
+/* ==========================================================================
+   7. Module 7 : Aperçu Officiel & Impression A4 des Rapports
+   ========================================================================== */
+function renderPrintableReportHtml(reportMeta, snapshot) {
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Générale & Administration';
+  const statusRows = Object.entries(snapshot.requests_by_status || {})
+    .map(([st, cnt]) => `<tr><td>${escHtml(st)}</td><td class="text-end fw-bold">${cnt}</td></tr>`)
+    .join('') || '<tr><td colspan="2" class="text-muted">Aucune demande sur la période</td></tr>';
+
+  return `
+    <div class="pdf-header-banner">
+      <div>
+        <div class="pdf-brand-title"><i class="bi bi-layers-half"></i> ${escHtml(orgName)}</div>
+        <div class="text-muted small mt-1">${escHtml(reportMeta.title || 'Rapport consolidé d’activité et de gestion')}</div>
+      </div>
+      <div class="text-end">
+        <span class="badge bg-primary px-3 py-1 mb-1">${escHtml(reportMeta.reference || 'RAPPORT')}</span>
+        <div class="small text-muted">Période : ${escHtml(reportMeta.period_from)} au ${escHtml(reportMeta.period_to)}</div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Demandes période</small><strong class="fs-5">${snapshot.totals?.requests ?? 0}</strong><div class="small text-muted">Délai moyen : ${snapshot.average_processing_hours ?? 0} h</div></div></div>
+      <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Dépenses décaissées</small><strong class="fs-6">${formatCurrency(snapshot.expenses?.disbursed)}</strong><div class="small text-danger">À justifier : ${formatCurrency(snapshot.expenses?.unjustified)}</div></div></div>
+      <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Valorisation du stock</small><strong class="fs-6">${formatCurrency(snapshot.stock?.value)}</strong><div class="small text-muted">${snapshot.stock?.low ?? 0} alerte(s) • ${snapshot.assets?.total ?? 0} bien(s)</div></div></div>
+    </div>
+
+    <div class="row g-4 mb-4">
+      <div class="col-6">
+        <h6 class="fw-bold border-bottom pb-1">Répartition des demandes par statut</h6>
+        <table class="table table-sm small mb-0"><tbody>${statusRows}</tbody></table>
+      </div>
+      <div class="col-6">
+        <h6 class="fw-bold border-bottom pb-1">Patrimoine & Parc automobile</h6>
+        <table class="table table-sm small mb-0">
+          <tbody>
+            <tr><td>Biens durables (Total / Affectés / Endommagés)</td><td class="text-end fw-bold">${snapshot.assets?.total ?? 0} / ${snapshot.assets?.assigned ?? 0} / ${snapshot.assets?.damaged ?? 0}</td></tr>
+            <tr><td>Parc auto (Total / En service / Maintenance)</td><td class="text-end fw-bold">${snapshot.vehicles?.total ?? 0} / ${snapshot.vehicles?.in_service ?? 0} / ${snapshot.vehicles?.maintenance ?? 0}</td></tr>
+            <tr><td>Alertes d’échéances / entretiens véhicules</td><td class="text-end fw-bold text-danger">${snapshot.vehicles?.alerts ?? 0}</td></tr>
+            <tr><td>Mouvements de stock enregistrés</td><td class="text-end fw-bold">${snapshot.stock?.movements ?? 0}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    ${(reportMeta.difficulties || reportMeta.action_items) ? `
+      <div class="row g-3 mb-4">
+        <div class="col-6"><div class="p-3 bg-light border rounded h-100"><strong class="small d-block mb-1">Difficultés rencontrées :</strong><div class="small">${escHtml(reportMeta.difficulties || 'RAS')}</div></div></div>
+        <div class="col-6"><div class="p-3 bg-light border rounded h-100"><strong class="small d-block mb-1">Actions à mener :</strong><div class="small">${escHtml(reportMeta.action_items || 'RAS')}</div></div></div>
+      </div>` : ''}
+
+    <div class="small text-muted border-top pt-2 d-flex justify-content-between">
+      <span>Document généré par GESTION+ le ${formatDateTime(reportMeta.created_at || new Date())}</span>
+      <span>Visa Responsable Administratif / Direction Générale</span>
+    </div>
+  `;
+}
+
+function openReportPreviewModal(customReport = null) {
+  const container = document.getElementById('printableReportDocument');
+  if (!container) return;
+
+  if (customReport && customReport.snapshot) {
+    container.innerHTML = renderPrintableReportHtml(customReport, customReport.snapshot);
+    container.dataset.reference = customReport.reference || 'Rapport';
+  } else if (AppState.lastReportPayload) {
+    const p = AppState.lastReportPayload;
+    container.innerHTML = renderPrintableReportHtml({
+      reference: 'SYNTHESE-EN-DIRECT',
+      title: 'État synthétique des activités, stocks, dépenses et équipements',
+      period_from: p.period?.from || '-',
+      period_to: p.period?.to || '-'
+    }, p.data || {});
+    container.dataset.reference = 'Rapport_Gestion';
+  } else {
+    showToast('Chargez d’abord l’onglet Rapports.', 'info');
+    return;
+  }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalReportPreview')).show();
+}
+
+window.openSavedReportPreview = async function (reportId) {
+  const local = (AppState.currentSavedReports || []).find(r => Number(r.id) === Number(reportId));
+  if (local && local.snapshot) {
+    openReportPreviewModal(local);
+    return;
+  }
+  const res = await fetch(`/api/reports/saved/${reportId}`);
+  const json = await res.json();
+  if (res.ok && json.success) openReportPreviewModal(json.data);
+};
+
+window.exportTableAsPdf = async function(moduleType) {
+  const container = document.getElementById('printableReportDocument');
+  if (!container) return;
+
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Générale & Administration';
+  const nowStr = formatDateTime(new Date());
+  let title = '';
+  let refCode = '';
+  let tableHtml = '';
+  let summaryHtml = '';
+
+  if (moduleType === 'articles') {
+    if (!AppState.currentArticles || AppState.currentArticles.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadArticles) await BackendApi.loadArticles();
+    }
+    const list = AppState.currentArticles || [];
+    title = 'État Général du Stock et des Disponibilités';
+    refCode = `STOCK-${new Date().toISOString().slice(0, 10)}`;
+    const totalQty = list.reduce((sum, a) => sum + Number(a.stock || 0), 0);
+    const totalVal = list.reduce((sum, a) => sum + (Number(a.stock || 0) * Number(a.unit_price || 0)), 0);
+    const lowCount = list.filter(a => Number(a.stock || 0) <= Number(a.min_stock || 0)).length;
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Articles</small><strong class="fs-5">${list.length} références</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Quantité en Stock</small><strong class="fs-5">${totalQty} unités</strong><div class="small text-danger">${lowCount} alerte(s) stock faible</div></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Valorisation Globale</small><strong class="fs-5">${formatCurrency(totalVal)}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Code</th>
+            <th>Désignation</th>
+            <th>Catégorie</th>
+            <th>Emplacement</th>
+            <th class="text-center">Stock</th>
+            <th class="text-center">Seuil Min</th>
+            <th class="text-end">Prix Unitaire</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(a => {
+            const isLow = Number(a.stock || 0) <= Number(a.min_stock || 0);
+            const isOut = Number(a.stock || 0) === 0;
+            const statusLabel = isOut ? 'Rupture' : (isLow ? 'Stock faible' : 'En stock');
+            return `<tr>
+              <td class="fw-bold">${escHtml(a.code || '-')}</td>
+              <td>${escHtml(a.name || '-')}</td>
+              <td>${escHtml(a.category || '-')}</td>
+              <td>${escHtml(a.location || '-')}</td>
+              <td class="text-center fw-bold">${a.stock ?? 0}</td>
+              <td class="text-center text-muted">${a.min_stock ?? 0}</td>
+              <td class="text-end">${formatCurrency(a.unit_price ?? 0)}</td>
+              <td><span class="badge ${isOut ? 'bg-danger' : (isLow ? 'bg-warning text-dark' : 'bg-success')}">${statusLabel}</span></td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="8" class="text-center text-muted">Aucun article enregistré.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'requests') {
+    if (!AppState.currentRequests || AppState.currentRequests.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadRequests) await BackendApi.loadRequests();
+    }
+    const list = AppState.currentRequests || [];
+    title = 'Registre des Demandes Internes de Matériel';
+    refCode = `DEMANDES-${new Date().toISOString().slice(0, 10)}`;
+    const pending = list.filter(r => !['Validée', 'Exécutée', 'Clôturée', 'Rejetée', 'Annulée'].includes(r.status)).length;
+    const executed = list.filter(r => ['Exécutée', 'Clôturée'].includes(r.status)).length;
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Demandes</small><strong class="fs-5">${list.length}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">En Cours / Traitement</small><strong class="fs-5 text-warning">${pending}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Exécutées / Clôturées</small><strong class="fs-5 text-success">${executed}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Référence</th>
+            <th>Demandeur</th>
+            <th>Service</th>
+            <th>Catégorie</th>
+            <th>Urgence</th>
+            <th>Statut</th>
+            <th>Date Demande</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(r => `<tr>
+            <td class="fw-bold">${escHtml(r.reference || '-')}</td>
+            <td>${escHtml(r.user?.name || r.demandeur_name || '-')}</td>
+            <td>${escHtml(r.department || r.service || '-')}</td>
+            <td>${escHtml(r.category || '-')}</td>
+            <td><span class="badge ${r.urgency === 'Urgent' ? 'bg-danger' : 'bg-secondary'}">${escHtml(r.urgency || 'Normal')}</span></td>
+            <td><span class="badge bg-primary">${escHtml(r.status || 'Soumise')}</span></td>
+            <td>${formatDateShort(r.created_at || new Date())}</td>
+          </tr>`).join('') || '<tr><td colspan="7" class="text-center text-muted">Aucune demande enregistrée.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'movements') {
+    if (!AppState.currentMovements || AppState.currentMovements.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadMovements) await BackendApi.loadMovements();
+    }
+    const list = AppState.currentMovements || [];
+    title = 'Historique des Mouvements de Stock';
+    refCode = `MVT-${new Date().toISOString().slice(0, 10)}`;
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Total Mouvements</small><strong class="fs-5">${list.length} opérations</strong></div></div>
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Contrôle & Traçabilité</small><strong class="fs-5 text-success">100% validé & audité</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Date & Heure</th>
+            <th>Type</th>
+            <th>Article</th>
+            <th class="text-center">Quantité</th>
+            <th>Réf. Demande</th>
+            <th>Motif</th>
+            <th>Opérateur</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(m => `<tr>
+            <td>${formatDateTime(m.created_at || new Date())}</td>
+            <td><span class="badge ${m.type === 'in' || m.type === 'Entrée' ? 'bg-success' : 'bg-danger'}">${escHtml(m.type || '-')}</span></td>
+            <td class="fw-bold">${escHtml(m.article?.name || m.article_name || '-')}</td>
+            <td class="text-center fw-bold">${m.quantity ?? 0}</td>
+            <td>${escHtml(m.request_reference || m.material_request?.reference || '-')}</td>
+            <td>${escHtml(m.reason || '-')}</td>
+            <td>${escHtml(m.user?.name || '-')}</td>
+          </tr>`).join('') || '<tr><td colspan="7" class="text-center text-muted">Aucun mouvement enregistré.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'assets') {
+    if (!AppState.currentAssets || AppState.currentAssets.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadOperations) await BackendApi.loadOperations();
+    }
+    const list = AppState.currentAssets || [];
+    title = 'État Général du Patrimoine & Équipements Durables';
+    refCode = `PATRIMOINE-${new Date().toISOString().slice(0, 10)}`;
+    const assigned = list.filter(a => a.availability === 'Affecté' || a.assigned_to).length;
+    const totalVal = list.reduce((sum, a) => sum + Number(a.acquisition_cost || 0), 0);
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Équipements</small><strong class="fs-5">${list.length} biens</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Affectés en Service</small><strong class="fs-5 text-primary">${assigned}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Valeur d'Acquisition</small><strong class="fs-5">${formatCurrency(totalVal)}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>N° Inventaire</th>
+            <th>Désignation</th>
+            <th>Catégorie</th>
+            <th>N° Série</th>
+            <th>État</th>
+            <th>Disponibilité</th>
+            <th>Détenteur / Service</th>
+            <th class="text-end">Coût Acquisition</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(a => `<tr>
+            <td class="fw-bold">${escHtml(a.inventory_number || '-')}</td>
+            <td>${escHtml(a.name || '-')}</td>
+            <td>${escHtml(a.category || '-')}</td>
+            <td>${escHtml(a.serial_number || '-')}</td>
+            <td><span class="badge ${a.condition === 'Neuf' ? 'bg-success' : (a.condition === 'Endommagé' || a.condition === 'Hors service' ? 'bg-danger' : 'bg-info text-dark')}">${escHtml(a.condition || 'Bon état')}</span></td>
+            <td><span class="badge ${a.availability === 'Disponible' ? 'bg-success' : 'bg-primary'}">${escHtml(a.availability || '-')}</span></td>
+            <td>${escHtml(a.assigned_user?.name || a.department || '-')}</td>
+            <td class="text-end">${formatCurrency(a.acquisition_cost ?? 0)}</td>
+          </tr>`).join('') || '<tr><td colspan="8" class="text-center text-muted">Aucun bien durable enregistré.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'vehicles') {
+    if (!AppState.currentVehicles || AppState.currentVehicles.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadOperations) await BackendApi.loadOperations();
+    }
+    const list = AppState.currentVehicles || [];
+    title = 'État du Parc Automobile & Suivi des Échéances';
+    refCode = `PARCAUTO-${new Date().toISOString().slice(0, 10)}`;
+    const inService = list.filter(v => v.status === 'En service' || v.status === 'Disponible').length;
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Total Véhicules</small><strong class="fs-5">${list.length}</strong></div></div>
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Opérationnels</small><strong class="fs-5 text-success">${inService}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Immatriculation</th>
+            <th>Marque & Modèle</th>
+            <th>Type</th>
+            <th class="text-center">Kilométrage</th>
+            <th>État</th>
+            <th>Conducteur / Service</th>
+            <th>Échéance Assurance</th>
+            <th>Visite Tech.</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(v => `<tr>
+            <td class="fw-bold">${escHtml(v.registration_number || '-')}</td>
+            <td>${escHtml(v.brand || '')} ${escHtml(v.model || '')}</td>
+            <td>${escHtml(v.vehicle_type || '-')}</td>
+            <td class="text-center fw-bold">${v.mileage ? Number(v.mileage).toLocaleString('fr-FR') + ' km' : '-'}</td>
+            <td><span class="badge ${v.status === 'En service' || v.status === 'Disponible' ? 'bg-success' : 'bg-warning text-dark'}">${escHtml(v.status || '-')}</span></td>
+            <td>${escHtml(v.driver?.name || v.department || '-')}</td>
+            <td>${formatDateShort(v.insurance_expires_at)}</td>
+            <td>${formatDateShort(v.inspection_expires_at)}</td>
+          </tr>`).join('') || '<tr><td colspan="8" class="text-center text-muted">Aucun véhicule enregistré.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'expenses') {
+    if (!AppState.currentExpenses || AppState.currentExpenses.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadOperations) await BackendApi.loadOperations();
+    }
+    const list = AppState.currentExpenses || [];
+    title = 'État des Dépenses, Décaissements & Justificatifs';
+    refCode = `DEPENSES-${new Date().toISOString().slice(0, 10)}`;
+    const disbursed = list.reduce((sum, e) => sum + Number(e.disbursed_amount || 0), 0);
+    const justified = list.reduce((sum, e) => sum + Number(e.justified_amount || 0), 0);
+    const unjustified = Math.max(0, disbursed - justified);
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Décaissé</small><strong class="fs-5">${formatCurrency(disbursed)}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Justifié</small><strong class="fs-5 text-success">${formatCurrency(justified)}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Reste à Justifier</small><strong class="fs-5 text-danger">${formatCurrency(unjustified)}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Réf. Dépense</th>
+            <th>Demande Rattachée</th>
+            <th>Bénéficiaire / Fournisseur</th>
+            <th>Mode Paiement</th>
+            <th class="text-end">Autorisé</th>
+            <th class="text-end">Décaissé</th>
+            <th class="text-end">Justifié</th>
+            <th class="text-end">Solde</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(e => `<tr>
+            <td class="fw-bold">${escHtml(e.expense_reference || '-')}</td>
+            <td>${escHtml(e.material_request?.reference || 'Direct')}</td>
+            <td>${escHtml(e.beneficiary || e.supplier?.name || '-')}</td>
+            <td>${escHtml(e.payment_method || '-')}</td>
+            <td class="text-end">${formatCurrency(e.authorized_amount ?? 0)}</td>
+            <td class="text-end fw-bold">${formatCurrency(e.disbursed_amount ?? 0)}</td>
+            <td class="text-end text-success">${formatCurrency(e.justified_amount ?? 0)}</td>
+            <td class="text-end text-danger">${formatCurrency(e.balance ?? 0)}</td>
+            <td>${e.is_overrun ? '<span class="badge bg-danger">Dépassement</span>' : '<span class="badge bg-success">Conforme</span>'}</td>
+          </tr>`).join('') || '<tr><td colspan="9" class="text-center text-muted">Aucune dépense enregistrée.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } else if (moduleType === 'replenishment') {
+    if (!AppState.currentArticles || AppState.currentArticles.length === 0) {
+      if (typeof BackendApi !== 'undefined' && BackendApi.loadArticles) await BackendApi.loadArticles();
+    }
+    const list = (AppState.currentArticles || []).filter(a => Number(a.stock || 0) <= Number(a.min_stock || 0));
+    title = 'État de Réapprovisionnement des Stocks (Besoins d’Achat)';
+    refCode = `REAPPRO-${new Date().toISOString().slice(0, 10)}`;
+    const totalEstCost = list.reduce((sum, a) => {
+      const needed = Math.max(1, (a.max_stock || a.min_stock * 2) - a.stock);
+      return sum + (needed * Number(a.unit_price || 0));
+    }, 0);
+
+    summaryHtml = `
+      <div class="row g-3 mb-4">
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Articles sous Seuil Minimum</small><strong class="fs-5 text-danger">${list.length} référence(s)</strong></div></div>
+        <div class="col-6"><div class="p-3 border rounded"><small class="text-muted d-block">Budget Estimatif Global</small><strong class="fs-5">${formatCurrency(totalEstCost)}</strong></div></div>
+      </div>
+    `;
+
+    tableHtml = `
+      <table class="table table-bordered table-sm small">
+        <thead class="table-light">
+          <tr>
+            <th>Code</th>
+            <th>Désignation</th>
+            <th>Fournisseur</th>
+            <th class="text-center">En Stock</th>
+            <th class="text-center">Seuil Min / Max</th>
+            <th class="text-center">Qté Suggérée</th>
+            <th class="text-end">Prix Unitaire</th>
+            <th class="text-end">Coût Estimé</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(a => {
+            const needed = Math.max(1, (a.max_stock || a.min_stock * 2) - a.stock);
+            const cost = needed * Number(a.unit_price || 0);
+            return `<tr>
+              <td class="fw-bold">${escHtml(a.code || '-')}</td>
+              <td>${escHtml(a.name || '-')}</td>
+              <td>${escHtml(a.supplier?.name || a.supplier_name || '-')}</td>
+              <td class="text-center fw-bold text-danger">${a.stock ?? 0}</td>
+              <td class="text-center text-muted">${a.min_stock ?? 0} / ${a.max_stock ?? '-'}</td>
+              <td class="text-center fw-bold text-primary">${needed}</td>
+              <td class="text-end">${formatCurrency(a.unit_price ?? 0)}</td>
+              <td class="text-end fw-bold">${formatCurrency(cost)}</td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="8" class="text-center text-muted">Tous les stocks sont au-dessus des seuils de réapprovisionnement.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="pdf-header-banner">
+      <div>
+        <div class="pdf-brand-title"><i class="bi bi-layers-half"></i> ${escHtml(orgName)}</div>
+        <div class="text-muted small mt-1">${escHtml(title)}</div>
+      </div>
+      <div class="text-end">
+        <span class="badge bg-primary px-3 py-1 mb-1">${escHtml(refCode)}</span>
+        <div class="small text-muted">Édité le : ${escHtml(nowStr)}</div>
+      </div>
+    </div>
+    ${summaryHtml}
+    <div class="table-responsive mb-4">
+      ${tableHtml}
+    </div>
+    <div class="small text-muted border-top pt-2 d-flex justify-content-between">
+      <span>Document officiel extrait de GESTION+ le ${escHtml(nowStr)}</span>
+      <span>Visa Responsable Administratif / Direction Générale</span>
+    </div>
+  `;
+  container.dataset.reference = refCode;
+
+  const modalEl = document.getElementById('modalReportPreview');
+  if (modalEl) {
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  }
+};
+
+/* ==========================================================================
+   8. Module 1, 8, 9 & 10 : Utilisateurs, Documents, Audit, Sauvegardes
+   ========================================================================== */
+function renderUserPermissionsGrid(selectedPermissions = null) {
+  const grid = document.getElementById('usrPermissionsGrid');
+  if (!grid) return;
+  const roleVal = document.getElementById('usrRole')?.value || 'Collaborateur';
+  const activePerms = Array.isArray(selectedPermissions)
+    ? selectedPermissions
+    : (DEFAULT_ROLE_PERMISSIONS[roleVal] || DEFAULT_ROLE_PERMISSIONS.Collaborateur);
+
+  grid.innerHTML = PERMISSION_CATALOG.map(perm => `
+    <div class="col-6 col-md-4">
+      <div class="form-check small">
+        <input class="form-check-input js-usr-perm-check" type="checkbox" value="${perm.key}" id="perm_${perm.key.replace('.', '_')}" ${activePerms.includes(perm.key) ? 'checked' : ''}>
+        <label class="form-check-label" for="perm_${perm.key.replace('.', '_')}">${escHtml(perm.label)}</label>
+      </div>
+    </div>
+  `).join('');
+}
+
+function resetUserModalMode() {
+  const form = document.getElementById('formNewUser');
+  if (!form) return;
+  form.reset();
+  delete form.dataset.editUserId;
+
+  const title = document.getElementById('userModalTitle');
+  const pwdInput = document.getElementById('usrPassword');
+  const pwdLabel = document.getElementById('usrPasswordLabel');
+  const pwdHint = document.getElementById('usrPasswordHint');
+  const matWrapper = document.getElementById('usrMatriculeWrapper');
+  const matDisplay = document.getElementById('usrMatriculeDisplay');
+  const submitBtn = document.getElementById('usrSubmitBtn');
+
+  if (title) title.textContent = 'Ajouter un compte utilisateur';
+  if (pwdInput) { pwdInput.required = true; pwdInput.value = ''; }
+  if (pwdLabel) pwdLabel.innerHTML = 'Mot de passe initial <span class="text-danger">*</span>';
+  if (pwdHint) pwdHint.textContent = 'Minimum 8 caractères.';
+  if (matWrapper) matWrapper.style.display = 'none';
+  if (matDisplay) matDisplay.textContent = '-';
+  if (submitBtn) submitBtn.textContent = 'Créer le compte';
+
+  renderUserPermissionsGrid();
+}
+
+window.openEditUserModal = function (userId) {
+  const u = (AppState.currentUsers || []).find(item => Number(item.id) === Number(userId));
+  if (!u) return;
+
+  const form = document.getElementById('formNewUser');
+  if (!form) return;
+  form.dataset.editUserId = u.id;
+
+  document.getElementById('userModalTitle').textContent = `Modifier l’utilisateur — ${u.name}`;
+  document.getElementById('usrName').value = u.name || '';
+  document.getElementById('usrEmail').value = u.email || '';
+  document.getElementById('usrPhone').value = u.phone || '';
+  document.getElementById('usrOffice').value = u.office_location || '';
+  const matWrapper = document.getElementById('usrMatriculeWrapper');
+  if (matWrapper) matWrapper.style.display = '';
+  document.getElementById('usrMatriculeDisplay').textContent = u.matricule || '-';
+
+  const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
+  document.getElementById('usrRole').value = roleMap[u.role] || 'Collaborateur';
+  const srvSel = document.getElementById('usrService');
+  if (srvSel && u.service) {
+    if (![...srvSel.options].some(o => o.value === u.service)) {
+      srvSel.insertAdjacentHTML('beforeend', `<option value="${escHtml(u.service)}">${escHtml(u.service)}</option>`);
+    }
+    srvSel.value = u.service;
+  }
+
+  const pwdInput = document.getElementById('usrPassword');
+  const pwdLabel = document.getElementById('usrPasswordLabel');
+  const pwdHint = document.getElementById('usrPasswordHint');
+  if (pwdInput) { pwdInput.required = false; pwdInput.value = ''; }
+  if (pwdLabel) pwdLabel.textContent = 'Nouveau mot de passe (optionnel)';
+  if (pwdHint) pwdHint.textContent = 'Laissez vide pour conserver le mot de passe actuel.';
+
+  document.getElementById('usrSubmitBtn').textContent = 'Enregistrer les modifications';
+  renderUserPermissionsGrid(u.effective_permissions || u.permissions || null);
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNewUser')).show();
+};
+
+window.openResetUserPasswordModal = function (userId, userName) {
+  document.getElementById('resetTargetUserId').value = userId;
+  document.getElementById('resetTargetUserName').textContent = userName;
+  document.getElementById('resetTargetUserPassword').value = '';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalResetUserPassword')).show();
+};
+
+async function openAllLoginHistoryModal() {
+  try {
+    const res = await fetch('/api/login-history');
+    const json = await res.json();
+    const tbody = document.getElementById('allLoginHistoryTableBody');
+    if (tbody) {
+      const logs = json.data || [];
+      tbody.innerHTML = logs.length
+        ? logs.map(l => `<tr>
+            <td class="text-nowrap small">${formatDateTime(l.created_at)}</td>
+            <td><strong>${escHtml(l.user?.name || 'Inconnu')}</strong><small class="d-block text-muted">${escHtml(l.user?.email || '')}</small></td>
+            <td><span class="badge ${l.action === 'auth.login' ? 'bg-success-subtle text-success' : (l.action === 'auth.logout' ? 'bg-secondary-subtle text-secondary' : 'bg-danger-subtle text-danger')}">${escHtml(l.action)}</span></td>
+            <td class="font-monospace small">${escHtml(l.ip_address || '127.0.0.1')}</td>
+            <td class="small text-muted">${escHtml(l.description || '')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="5" class="text-center text-muted py-3">Aucune connexion enregistrée.</td></tr>';
+    }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalLoginHistory')).show();
+  } catch (e) {
+    showToast('Impossible de charger l’historique des connexions.', 'danger');
+  }
+}
+
+window.deleteDocument = async function (docId, docTitle) {
+  if (!confirm(`Supprimer le document administratif "${docTitle}" ?`)) return;
+  try {
+    const res = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+    const data = await res.json();
+    showToast(data.message || 'Document supprimé.', res.ok ? 'success' : 'danger');
+    if (res.ok) await BackendApi.loadDocuments();
+  } catch (e) {
+    showToast('Impossible de supprimer ce document.', 'danger');
+  }
+};
+
+function setupModalsAndActions() {
+  document.getElementById('topbarBtnRefresh')?.addEventListener('click', () => {
+    BackendApi.refreshAll({ showIndicator: true, silent: false });
+  });
+
+  document.getElementById('btnMarkAllNotificationsRead')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await fetch('/api/notifications/read-all', { method: 'PUT' });
+    await BackendApi.loadNotifications();
+    showToast('Notifications marquées comme lues.', 'info');
+  });
+
+  document.getElementById('btnOpenReplenishmentModal')?.addEventListener('click', openReplenishmentModal);
+  document.getElementById('btnOpenLoginHistoryModal')?.addEventListener('click', openAllLoginHistoryModal);
+  document.getElementById('btnOpenCreateUserModal')?.addEventListener('click', resetUserModalMode);
+  document.getElementById('usrRole')?.addEventListener('change', () => renderUserPermissionsGrid());
 
   document.querySelectorAll('.js-open-selected-bon').forEach(button => {
     button.addEventListener('click', () => openPdfModal(AppState.selectedRequestRef));
   });
 
-  if (btnApprove) {
-    btnApprove.addEventListener('click', () => {
-      const activeRef = AppState.selectedRequestRef;
-      if (activeRef) {
-        approveRequest(activeRef);
-      } else if (AppState.currentRequests && AppState.currentRequests.length > 0) {
-        approveRequest(AppState.currentRequests[0].reference);
-      } else {
-        showToast('Aucune demande sélectionnée.', 'warning');
-      }
-    });
-  }
+  // Actions détail de demande
+  document.getElementById('btnActionVerify')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'verify', { status: 'En attente de validation' });
+    }
+  });
+  document.getElementById('btnActionApprove')?.addEventListener('click', () => {
+    if (AppState.selectedRequestRef) openApproveRequestModal(AppState.selectedRequestRef);
+  });
+  document.getElementById('btnActionCorrection')?.addEventListener('click', () => {
+    if (AppState.selectedRequestRef) openRequestReasonModal('request-correction', AppState.selectedRequestRef);
+  });
+  document.getElementById('btnActionReject')?.addEventListener('click', () => {
+    if (AppState.selectedRequestRef) openRequestReasonModal('reject', AppState.selectedRequestRef);
+  });
+  document.getElementById('btnActionAssign')?.addEventListener('click', () => {
+    if (!AppState.selectedRequestRef) return;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAssignRequest')).show();
+  });
+  document.getElementById('btnActionExecInProgress')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En cours d\'exécution' });
+    }
+  });
+  document.getElementById('btnActionExecSupply')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En attente d\'approvisionnement' });
+    }
+  });
+  document.getElementById('btnActionExecJustification')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En attente de justification' });
+    }
+  });
+  document.getElementById('btnActionDeliver')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef && confirm(`Confirmer l’exécution / la remise pour ${AppState.selectedRequestRef} ?`)) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'deliver');
+    }
+  });
+  document.getElementById('btnActionReceive')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef && confirm('Confirmer la réception de la demande ?')) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'receive');
+    }
+  });
+  document.getElementById('btnActionReturn')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef && confirm(`Confirmer la restitution en stock du matériel pour ${AppState.selectedRequestRef} ?`)) {
+      await BackendApi.returnRequest(AppState.selectedRequestRef);
+    }
+  });
+  document.getElementById('btnActionClose')?.addEventListener('click', async () => {
+    if (AppState.selectedRequestRef && confirm(`Clôturer définitivement la demande ${AppState.selectedRequestRef} ?`)) {
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'close');
+    }
+  });
 
-  if (btnReturn) {
-    btnReturn.addEventListener('click', async () => {
-      if (AppState.currentRole !== 'admin') {
-        showToast('Accès refusé : Seul le Gestionnaire peut enregistrer une restitution.', 'danger');
-        return;
-      }
-      const activeRef = AppState.selectedRequestRef;
-      if (!activeRef) {
-        showToast('Aucune demande sélectionnée.', 'warning');
-        return;
-      }
-      if (confirm(`Confirmez-vous la restitution physique du matériel pour la demande ${activeRef} ? Les stocks seront réintégrés.`)) {
-        if (typeof BackendApi !== 'undefined') {
-          await BackendApi.returnRequest(activeRef);
-        }
-      }
+  // Soumission modal validation demande avec quantités ajustables
+  document.getElementById('formApproveRequestModal')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ref = AppState.selectedRequestRef;
+    if (!ref) return;
+    const quantities = {};
+    document.querySelectorAll('.js-approve-item-qty').forEach(inp => {
+      quantities[inp.dataset.itemId] = parseInt(inp.value, 10) || 0;
     });
-  }
+    const comment = document.getElementById('approveModalComment')?.value.trim() || null;
+    const ok = await BackendApi.approveRequest(ref, { quantities, comment });
+    if (ok) {
+      bootstrap.Modal.getInstance(document.getElementById('modalApproveRequest'))?.hide();
+      openPdfModal(ref);
+    }
+  });
 
-  if (btnCorrection) {
-    btnCorrection.addEventListener('click', async () => {
-      const activeRef = AppState.selectedRequestRef;
-      const reason = activeRef ? prompt('Précisez la correction attendue :') : null;
-      if (reason?.trim()) await BackendApi.transitionRequest(activeRef, 'request-correction', { reason: reason.trim() });
-    });
-  }
+  // Soumission modal motif obligatoire (rejet / complément / annulation)
+  document.getElementById('formRequestReasonModal')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const action = document.getElementById('requestReasonActionType').value;
+    const ref = document.getElementById('requestReasonTargetRef').value;
+    const reason = document.getElementById('requestReasonTextarea').value.trim();
+    if (!ref || !reason) return;
+    const ok = await BackendApi.transitionRequest(ref, action, { reason });
+    if (ok) bootstrap.Modal.getInstance(document.getElementById('modalRequestReason'))?.hide();
+  });
 
-  if (btnDeliver) {
-    btnDeliver.addEventListener('click', async () => {
-      const activeRef = AppState.selectedRequestRef;
-      if (activeRef && confirm(`Confirmer la remise physique des articles pour ${activeRef} ?`)) {
-        await BackendApi.transitionRequest(activeRef, 'deliver');
-      }
-    });
-  }
+  // Affectation agent
+  document.getElementById('formAssignRequest')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const assignedTo = document.getElementById('assignAgentSelect').value;
+    const comment = document.getElementById('assignCommentInput')?.value.trim() || null;
+    if (!assignedTo || !AppState.selectedRequestRef) return;
+    const success = await BackendApi.transitionRequest(AppState.selectedRequestRef, 'assign', { assigned_to: Number(assignedTo), comment });
+    if (success) bootstrap.Modal.getInstance(document.getElementById('modalAssignRequest'))?.hide();
+  });
 
-  if (btnClose) {
-    btnClose.addEventListener('click', async () => {
-      const activeRef = AppState.selectedRequestRef;
-      if (activeRef && confirm(`Clôturer définitivement la demande ${activeRef} ?`)) {
-        await BackendApi.transitionRequest(activeRef, 'close');
-      }
-    });
-  }
+  // Ajout de pièce jointe sur une demande existante
+  document.getElementById('formAddRequestAttachment')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!AppState.selectedRequestRef) return;
+    const fileInput = document.getElementById('reqNewAttachmentFile');
+    const file = fileInput?.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`/api/requests/${encodeURIComponent(AppState.selectedRequestRef)}/attachments`, { method: 'POST', body: fd });
+    const data = await res.json();
+    showToast(data.message || 'Pièce jointe ajoutée.', res.ok ? 'success' : 'danger');
+    if (res.ok) {
+      e.currentTarget.reset();
+      await openRequestDetail(AppState.selectedRequestRef);
+    }
+  });
 
-  if (btnReject) {
-    btnReject.addEventListener('click', async () => {
-      if (AppState.currentRole !== 'admin') {
-        showToast('Accès refusé : Seul le Gestionnaire de stock / Administrateur peut rejeter une demande.', 'danger');
-        return;
-      }
-      const activeRef = AppState.selectedRequestRef;
-      if (!activeRef) {
-        showToast('Aucune demande sélectionnée.', 'warning');
-        return;
-      }
-      const reason = prompt('Motif du refus de la demande :', 'Quantités disproportionnées ou matériel indisponible.');
-      if (reason && reason.trim()) {
-        if (typeof BackendApi !== 'undefined') {
-          await BackendApi.rejectRequest(activeRef, reason.trim());
-        }
-      }
-    });
-  }
+  // Export CSV demandes filtrées
+  document.getElementById('btnExportRequestsCsv')?.addEventListener('click', () => {
+    const params = new URLSearchParams();
+    const st = document.getElementById('filterReqStatus')?.value || '';
+    const cat = document.getElementById('filterReqCategory')?.value || '';
+    const urg = document.getElementById('filterReqUrgency')?.value || '';
+    if (st && st !== '__OVERDUE__') params.set('status', st);
+    if (st === '__OVERDUE__') params.set('overdue', '1');
+    if (cat) params.set('category', cat);
+    if (urg) params.set('urgency', urg);
+    downloadAuthenticatedFile(`/api/requests-export?${params.toString()}`, 'demandes.csv');
+  });
 
-  // Modal Nouvel Article (Formulaire d'ajout rapide - réservé Administrateur)
+  // Modal Nouvel Article
   const formNewArticle = document.getElementById('formNewArticle');
   if (formNewArticle) {
+    document.querySelectorAll('[data-bs-target="#modalNewArticle"]').forEach(btn => btn.addEventListener('click', resetArticleFormMode));
+    document.getElementById('modalNewArticle')?.addEventListener('hidden.bs.modal', resetArticleFormMode);
+
     formNewArticle.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (AppState.currentRole !== 'admin') {
-        showToast('Action restreinte : seuls les administrateurs et gestionnaires de stock peuvent créer des articles.', 'danger');
-        return;
-      }
+      if (!AppState.canManageOps) return;
       const name = document.getElementById('artName').value.trim();
       const cat = document.getElementById('artCategory').value;
       const unit = document.getElementById('artUnit').value;
       const qty = parseInt(document.getElementById('artQty').value, 10);
-      const threshold = parseInt(document.getElementById('artThreshold').value, 10);
-      const location = document.getElementById('artLocation').value.trim();
-      const currentUserId = AppState.currentUser?.id;
-      const submitButton = e.submitter;
+      const threshold = Math.max(1, parseInt(document.getElementById('artThreshold').value, 10) || 1);
+      const location = document.getElementById('artLocation').value.trim() || null;
+      const maximumThreshold = document.getElementById('artMaximumThreshold').value || null;
+      const unitCost = document.getElementById('artUnitCost').value || null;
+      const supplier = document.getElementById('artSupplier').value.trim() || null;
+      const articleId = formNewArticle.dataset.articleId;
+      const isEditing = Boolean(articleId);
 
-      if (submitButton) submitButton.disabled = true;
-
-      try {
-        const res = await fetch('/api/articles', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, location, created_by: currentUserId })
-        });
-        const result = await res.json();
-        if (res.ok && result.success) {
-          showToast(result.message || `Article "${name}" créé avec succès !`, 'success');
-          const modalEl = document.getElementById('modalNewArticle');
-          const modalInstance = bootstrap.Modal.getInstance(modalEl);
-          if (modalInstance) modalInstance.hide();
-          formNewArticle.reset();
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.refreshAll({ showIndicator: true });
-          }
-          return;
-        } else {
-          const validationMessage = Object.values(result.errors || {}).flat()[0];
-          showToast(validationMessage || result.message || 'Erreur lors de la création de l\'article.', 'danger');
-          return;
-        }
-      } catch (err) {
-        console.warn('API error:', err);
-        showToast('Impossible de contacter le serveur. L\'article n\'a pas été créé.', 'danger');
-      } finally {
-        if (submitButton) submitButton.disabled = false;
-      }
-    });
-  }
-
-  // Modal d'ajustement manuel du stock
-  const formNewMvt = document.getElementById('formNewMovement');
-  if (formNewMvt) {
-    formNewMvt.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const articleSelect = document.getElementById('mvtArticle');
-      const articleId = parseInt(articleSelect.value, 10);
-      const type = document.getElementById('mvtType').value;
-      const qty = parseInt(document.getElementById('mvtQty').value, 10);
-      const reason = document.getElementById('mvtReason').value.trim();
-      const currentUserId = AppState.currentUser?.id;
-
-      if (!articleId) {
-        showToast('Veuillez sélectionner un article dans la liste.', 'warning');
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/movements', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ article_id: articleId, type, quantity: qty, reason, user_id: currentUserId })
-        });
-        const result = await res.json();
-        if (result.success) {
-          showToast(`Ajustement enregistré (${type === 'Entrée' ? '+' : '-'}${qty}) !`, 'success');
-          const modalEl = document.getElementById('modalNewMovement');
-          const modalInstance = bootstrap.Modal.getInstance(modalEl);
-          if (modalInstance) modalInstance.hide();
-          formNewMvt.reset();
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.refreshAll({ showIndicator: true });
-          }
-          return;
-        } else {
-          showToast(result.message || 'Erreur lors de l\'enregistrement du mouvement.', 'danger');
-          return;
-        }
-      } catch (err) {
-        console.warn('API error:', err);
-        showToast('Impossible d’enregistrer l’ajustement. Vérifiez la connexion au serveur.', 'danger');
-        return;
-      }
-    });
-  }
-
-  // Modal Nouveau Document Administratif
-  const formNewDoc = document.getElementById('formNewDocument');
-  if (formNewDoc) {
-    formNewDoc.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const title = document.getElementById('docTitle').value.trim();
-      const cat = document.getElementById('docCategory').value;
-      const type = document.getElementById('docType').value;
-      const service = document.getElementById('docService').value;
-
-      try {
-        const res = await fetch('/api/documents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ title, category: cat, type, service, user_id: 1 })
-        });
-        const result = await res.json();
-        if (result.success) {
-          showToast(`Document "${title}" archivé avec succès !`, 'success');
-          const modalEl = document.getElementById('modalNewDocument');
-          const modalInstance = bootstrap.Modal.getInstance(modalEl);
-          if (modalInstance) modalInstance.hide();
-          formNewDoc.reset();
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.loadDocuments();
-          }
-          return;
-        }
-      } catch (err) {
-        console.warn('API error:', err);
-      }
-
-      addNewDocumentRow({ title, category: cat, type, service });
-      const modalEl = document.getElementById('modalNewDocument');
-      const modalInstance = bootstrap.Modal.getInstance(modalEl);
-      if (modalInstance) modalInstance.hide();
-      formNewDoc.reset();
-      showToast(`Document "${title}" archivé avec succès !`, 'success');
-    });
-  }
-
-  // Formulaire pleine page Nouveau Document (View document-new)
-  const fullPageNewDoc = document.getElementById('formFullPageNewDoc');
-  if (fullPageNewDoc) {
-    fullPageNewDoc.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const title = document.getElementById('fpDocTitle').value;
-      const cat = document.getElementById('fpDocCategory').value;
-      const type = document.getElementById('fpDocType').value;
-      const service = document.getElementById('fpDocService').value;
-      const file = document.getElementById('fileUploadInput').files[0];
-
-      if (!file) {
-        showToast('Sélectionnez le fichier à archiver.', 'warning');
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('title', title);
-      formData.append('category', cat);
-      formData.append('type', type);
-      formData.append('service', service);
-      formData.append('file', file);
-
-      try {
-        const response = await fetch('/api/documents', { method: 'POST', body: formData });
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-          showToast(result.message || 'Le document n’a pas pu être archivé.', 'danger');
-          return;
-        }
-
-        showToast(`Document "${title}" enregistré et sécurisé avec succès !`, 'success');
-        fullPageNewDoc.reset();
-        await BackendApi.loadDocuments();
-        navigateToView('documents');
-      } catch (error) {
-        console.warn('Document upload error:', error);
-        showToast('Impossible de téléverser le document.', 'danger');
-      }
-    });
-  }
-
-  window.downloadDocument = async (documentId, fileName) => {
-    try {
-      const response = await fetch(`/api/documents/${documentId}/download`);
-      if (!response.ok) throw new Error('Téléchargement refusé');
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName || 'document';
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      showToast('Le fichier est indisponible ou vous n’avez pas les droits nécessaires.', 'danger');
-    }
-  };
-
-  // Modal Nouvel Utilisateur
-  const formNewUser = document.getElementById('formNewUser');
-  if (formNewUser) {
-    formNewUser.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = document.getElementById('usrName').value.trim();
-      const email = document.getElementById('usrEmail').value.trim();
-      const role = document.getElementById('usrRole').value;
-      const service = document.getElementById('usrService').value;
-      const password = document.getElementById('usrPassword')?.value || 'Password2025!';
-
-      try {
-        const res = await fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ name, email, role, service, password })
-        });
-        const result = await res.json();
-        if (result.success) {
-          showToast(`Utilisateur "${name}" créé avec succès !`, 'success');
-          const modalEl = document.getElementById('modalNewUser');
-          const modalInstance = bootstrap.Modal.getInstance(modalEl);
-          if (modalInstance) modalInstance.hide();
-          formNewUser.reset();
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.refreshAll({ showIndicator: true });
-          }
-          return;
-        } else {
-          showToast(result.message || 'Erreur lors de la création de l\'utilisateur.', 'danger');
-          return;
-        }
-      } catch (err) {
-        console.warn('API error create user:', err);
-      }
-
-      addNewUserRow({ name, email, role, service });
-      const modalEl = document.getElementById('modalNewUser');
-      const modalInstance = bootstrap.Modal.getInstance(modalEl);
-      if (modalInstance) modalInstance.hide();
-      formNewUser.reset();
-      showToast(`Utilisateur "${name}" créé avec succès !`, 'success');
-    });
-  }
-
-  // Impression du bon officiel uniquement, avec une mise en page A4 dédiée
-  const btnPrintPdf = document.getElementById('btnPrintPdfDoc');
-  if (btnPrintPdf) {
-    btnPrintPdf.addEventListener('click', () => {
-      const printableDocument = document.getElementById('printablePdfDocument');
-      const reference = printableDocument?.dataset.reference;
-
-      if (!printableDocument || !reference) {
-        showToast('Aucun bon valide n’est chargé pour l’impression.', 'warning');
-        return;
-      }
-
-      const previousTitle = document.title;
-      document.title = `Bon_${reference}`;
-      document.body.classList.add('printing-official-bon');
-
-      const cleanupPrintState = () => {
-        document.title = previousTitle;
-        document.body.classList.remove('printing-official-bon');
-      };
-
-      window.addEventListener('afterprint', cleanupPrintState, { once: true });
-      window.print();
-      window.setTimeout(cleanupPrintState, 60000);
-    });
-  }
-}
-
-/* ==========================================================================
-   5. Filtrage & Recherche Dynamique des Tableaux
-   ========================================================================== */
-function setupTableFilters() {
-  // Filtre Articles en stock
-  const searchStock = document.getElementById('searchStockInput');
-  const filterCatStock = document.getElementById('filterStockCategory');
-  const filterStatusStock = document.getElementById('filterStockStatus');
-
-  const applyStockFilter = () => {
-    const query = (searchStock?.value || '').toLowerCase();
-    const cat = filterCatStock?.value || '';
-    const status = filterStatusStock?.value || '';
-
-    const rows = document.querySelectorAll('#articlesStockTableBody tr');
-    rows.forEach(tr => {
-      const text = tr.innerText.toLowerCase();
-      const rowCat = tr.getAttribute('data-cat') || '';
-      const rowStatus = tr.getAttribute('data-status') || '';
-
-      const matchQuery = !query || text.includes(query);
-      const matchCat = !cat || rowCat === cat;
-      const matchStatus = !status || rowStatus === status;
-
-      if (matchQuery && matchCat && matchStatus) {
-        tr.style.display = '';
+      const res = await fetch(isEditing ? `/api/articles/${articleId}` : '/api/articles', {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, maximum_threshold: maximumThreshold, unit_cost: unitCost, supplier, location })
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        showToast(result.message || 'Article enregistré !', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('modalNewArticle'))?.hide();
+        resetArticleFormMode();
+        await BackendApi.refreshAll({ showIndicator: true, silent: true });
       } else {
-        tr.style.display = 'none';
+        const validationMessage = Object.values(result.errors || {}).flat()[0];
+        showToast(validationMessage || result.message || 'Erreur lors de l’enregistrement.', 'danger');
       }
     });
-  };
+  }
 
-  searchStock?.addEventListener('input', applyStockFilter);
-  filterCatStock?.addEventListener('change', applyStockFilter);
-  filterStatusStock?.addEventListener('change', applyStockFilter);
+  // Modal Mouvement de Stock (avec affichage conditionnel des champs Transfert)
+  const mvtTypeSelect = document.getElementById('mvtType');
+  const mvtTransferWrap = document.getElementById('mvtTransferFieldsWrapper');
+  mvtTypeSelect?.addEventListener('change', () => {
+    if (mvtTransferWrap) mvtTransferWrap.style.display = mvtTypeSelect.value === 'Transfert' ? 'block' : 'none';
+  });
 
-  // Filtre Mouvements de stock
-  const filterMvtType = document.getElementById('filterMovementType');
-  const searchMvt = document.getElementById('searchMovementInput');
+  document.getElementById('formNewMovement')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const articleId = parseInt(document.getElementById('mvtArticle').value, 10);
+    const type = document.getElementById('mvtType').value;
+    const qty = parseInt(document.getElementById('mvtQty').value, 10);
+    const reason = document.getElementById('mvtReason').value.trim();
+    const fromLocation = document.getElementById('mvtFromLocation')?.value.trim() || null;
+    const toLocation = document.getElementById('mvtToLocation')?.value.trim() || null;
+    const fromService = document.getElementById('mvtFromService')?.value.trim() || null;
+    const toService = document.getElementById('mvtToService')?.value.trim() || null;
+    const materialRequestId = document.getElementById('mvtRequestId')?.value || null;
+    const isEmergency = Boolean(document.getElementById('mvtEmergency')?.checked);
 
-  const applyMvtFilter = () => {
-    const type = filterMvtType?.value || '';
-    const query = (searchMvt?.value || '').toLowerCase();
-
-    const rows = document.querySelectorAll('#stockMovementsTableBody tr');
-    rows.forEach(tr => {
-      const rowType = tr.getAttribute('data-type') || '';
-      const text = tr.innerText.toLowerCase();
-
-      const matchType = !type || rowType === type;
-      const matchQuery = !query || text.includes(query);
-
-      tr.style.display = matchType && matchQuery ? '' : 'none';
+    const res = await fetch('/api/movements', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        article_id: articleId,
+        type,
+        quantity: qty,
+        reason,
+        from_location: fromLocation,
+        to_location: toLocation,
+        from_service: fromService,
+        to_service: toService,
+        material_request_id: materialRequestId,
+        is_emergency: isEmergency
+      })
     });
-  };
-
-  filterMvtType?.addEventListener('change', applyMvtFilter);
-  searchMvt?.addEventListener('input', applyMvtFilter);
-
-  // Filtre Documents administratifs
-  const searchDocs = document.getElementById('searchDocsInput');
-  const filterDocCat = document.getElementById('filterDocCategory');
-  const filterDocType = document.getElementById('filterDocType');
-  const filterDocService = document.getElementById('filterDocService');
-
-  const applyDocFilter = () => {
-    const query = (searchDocs?.value || '').toLowerCase();
-    const cat = filterDocCat?.value || '';
-    const type = filterDocType?.value || '';
-    const srv = filterDocService?.value || '';
-
-    const rows = document.querySelectorAll('#documentsTableBody tr');
-    rows.forEach(tr => {
-      const text = tr.innerText.toLowerCase();
-      const rowCat = tr.getAttribute('data-cat') || '';
-      const rowType = tr.getAttribute('data-type') || '';
-      const rowSrv = tr.getAttribute('data-service') || '';
-
-      const matchQuery = !query || text.includes(query);
-      const matchCat = !cat || rowCat === cat;
-      const matchType = !type || rowType === type;
-      const matchSrv = !srv || rowSrv === srv;
-
-      tr.style.display = (matchQuery && matchCat && matchType && matchSrv) ? '' : 'none';
-    });
-  };
-
-  searchDocs?.addEventListener('input', applyDocFilter);
-  filterDocCat?.addEventListener('change', applyDocFilter);
-  filterDocType?.addEventListener('change', applyDocFilter);
-  filterDocService?.addEventListener('change', applyDocFilter);
-
-  // Filtre Utilisateurs
-  const searchUsers = document.getElementById('searchUsersInput');
-  const filterUserRole = document.getElementById('filterUserRole');
-
-  const applyUserFilter = () => {
-    const query = (searchUsers?.value || '').toLowerCase();
-    const role = filterUserRole?.value || '';
-
-    const rows = document.querySelectorAll('#usersTableBody tr');
-    rows.forEach(tr => {
-      const text = tr.innerText.toLowerCase();
-      const rowRole = tr.getAttribute('data-role') || '';
-
-      const matchQuery = !query || text.includes(query);
-      const matchRole = !role || rowRole === role;
-
-      tr.style.display = matchQuery && matchRole ? '' : 'none';
-    });
-  };
-
-  searchUsers?.addEventListener('input', applyUserFilter);
-  filterUserRole?.addEventListener('change', applyUserFilter);
-}
-
-/* ==========================================================================
-   6. Ajout Dynamique de Lignes (Stock, Mouvements, Docs, Users)
-   ========================================================================== */
-function addNewArticleRow(art) {
-  const tbody = document.getElementById('articlesStockTableBody');
-  if (!tbody) return;
-
-  const isLow = art.qty <= art.threshold;
-  const statusBadge = isLow 
-    ? '<span class="badge-status badge-low-stock"><span class="badge-status-dot"></span> Stock faible</span>'
-    : '<span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> En stock</span>';
-
-  const tr = document.createElement('tr');
-  tr.setAttribute('data-cat', art.category);
-  tr.setAttribute('data-status', isLow ? 'faible' : 'dispo');
-  const isAdmin = AppState.currentRole === 'admin';
-  tr.innerHTML = `
-    <td class="fw-medium text-muted">${art.code}</td>
-    <td>
-      <div class="d-flex align-items-center gap-2">
-        <div class="rounded p-1 bg-light text-primary"><i class="bi bi-box-seam"></i></div>
-        <span class="fw-semibold text-dark">${art.name}</span>
-      </div>
-    </td>
-    <td>${art.category}</td>
-    <td>${art.unit}</td>
-    <td class="fw-bold">${art.qty}</td>
-    <td class="text-muted">${art.threshold}</td>
-    <td>${statusBadge}</td>
-    <td class="text-end">
-      <button class="btn-gp-icon admin-only-feature" title="Modifier l'article" style="${isAdmin ? '' : 'display:none;'}"><i class="bi bi-three-dots"></i></button>
-      <button class="btn btn-sm btn-outline-primary collaborator-only-feature py-0 px-2" style="${isAdmin ? 'display:none;' : ''}" onclick="showToast('${art.name.replace(/'/g, "\\'")} ajouté à votre demande !', 'info'); navigateToView('request-new');"><i class="bi bi-plus-lg me-1"></i> Demander</button>
-    </td>
-  `;
-  tbody.prepend(tr);
-}
-
-function addNewDocumentRow(doc) {
-  const tbody = document.getElementById('documentsTableBody');
-  if (!tbody) return;
-
-  let icon = '<i class="bi bi-file-earmark-pdf file-badge-icon file-icon-pdf"></i>';
-  if (doc.type === 'Word') icon = '<i class="bi bi-file-earmark-word file-badge-icon file-icon-word"></i>';
-  if (doc.type === 'Excel') icon = '<i class="bi bi-file-earmark-excel file-badge-icon file-icon-excel"></i>';
-
-  const tr = document.createElement('tr');
-  tr.setAttribute('data-cat', doc.category);
-  tr.setAttribute('data-type', doc.type);
-  tr.setAttribute('data-service', doc.service);
-  tr.innerHTML = `
-    <td>
-      <div class="d-flex align-items-center gap-3">
-        ${icon}
-        <span class="fw-semibold text-dark">${doc.title}</span>
-      </div>
-    </td>
-    <td>${doc.category}</td>
-    <td><span class="badge bg-light text-secondary border">${doc.type}</span></td>
-    <td>${doc.service}</td>
-    <td>Aujourd'hui</td>
-    <td class="text-end">
-      <button class="btn-gp-icon" title="Télécharger"><i class="bi bi-download"></i></button>
-      <button class="btn-gp-icon" title="Options"><i class="bi bi-three-dots"></i></button>
-    </td>
-  `;
-  tbody.prepend(tr);
-}
-
-function addNewUserRow(usr) {
-  const tbody = document.getElementById('usersTableBody');
-  if (!tbody) return;
-
-  const initials = usr.name.split(' ').map(n => n[0]).join('').substring(0, 2);
-  const tr = document.createElement('tr');
-  tr.setAttribute('data-role', usr.role);
-  tr.innerHTML = `
-    <td>
-      <div class="d-flex align-items-center gap-2">
-        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center fw-bold" style="width:34px; height:34px; font-size:0.8rem;">
-          ${initials}
-        </div>
-        <span class="fw-semibold text-dark">${usr.name}</span>
-      </div>
-    </td>
-    <td class="text-muted">${usr.email}</td>
-    <td><span class="badge bg-light text-dark border">${usr.role}</span></td>
-    <td>${usr.service}</td>
-    <td><span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> Actif</span></td>
-    <td class="text-end">
-      <button class="btn-gp-icon" title="Modifier"><i class="bi bi-three-dots"></i></button>
-    </td>
-  `;
-  tbody.prepend(tr);
-}
-
-/* ==========================================================================
-   7. Recherche Globale Topbar
-   ========================================================================== */
-function setupSearchGlobal() {
-  const globalInput = document.getElementById('topbarGlobalSearch');
-  if (!globalInput) return;
-
-  globalInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const q = globalInput.value.trim().toLowerCase();
-      if (!q) return;
-
-      if (q.includes('art') || q.includes('papier') || q.includes('stylo') || q.includes('stock')) {
-        navigateToView('stock-articles');
-        const s = document.getElementById('searchStockInput');
-        if (s) { s.value = q; s.dispatchEvent(new Event('input')); }
-      } else if (q.includes('dem') || q.includes('demande') || q.includes('formation')) {
-        navigateToView('request-detail');
-      } else if (q.includes('doc') || q.includes('pdf') || q.includes('contrat') || q.includes('procédure')) {
-        navigateToView('documents');
-        const d = document.getElementById('searchDocsInput');
-        if (d) { d.value = q; d.dispatchEvent(new Event('input')); }
-      } else {
-        showToast(`Recherche sur "${q}" effectuée.`, 'info');
-      }
+    const result = await res.json();
+    if (res.ok && result.success) {
+      showToast(result.message || 'Mouvement enregistré avec succès !', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('modalNewMovement'))?.hide();
+      e.currentTarget.reset();
+      if (mvtTransferWrap) mvtTransferWrap.style.display = 'none';
+      await BackendApi.refreshAll({ showIndicator: true, silent: true });
+    } else {
+      showToast(result.message || 'Impossible d’enregistrer ce mouvement.', 'danger');
     }
+  });
+
+  // Document administratif pleine page
+  const fileUploadInput = document.getElementById('fileUploadInput');
+  fileUploadInput?.addEventListener('change', () => {
+    const lbl = document.getElementById('selectedDocFileName');
+    if (lbl) lbl.textContent = fileUploadInput.files?.[0]?.name || '';
+  });
+
+  document.getElementById('formFullPageNewDoc')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = document.getElementById('fpDocTitle').value.trim();
+    const cat = document.getElementById('fpDocCategory').value;
+    const type = document.getElementById('fpDocType').value;
+    const service = document.getElementById('fpDocService').value;
+    const file = document.getElementById('fileUploadInput').files?.[0];
+    if (!file) {
+      showToast('Sélectionnez le fichier à archiver.', 'warning');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('category', cat);
+    formData.append('type', type);
+    formData.append('service', service);
+    formData.append('file', file);
+
+    const response = await fetch('/api/documents', { method: 'POST', body: formData });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      showToast(result.message || 'Le document n’a pas pu être archivé.', 'danger');
+      return;
+    }
+    showToast(`Document "${title}" (${result.data?.reference || 'DOC'}) archivé avec succès !`, 'success');
+    e.currentTarget.reset();
+    await BackendApi.loadDocuments();
+    navigateToView('documents');
+  });
+
+  window.downloadDocument = (documentId, fileName) => {
+    downloadAuthenticatedFile(`/api/documents/${documentId}/download`, fileName || 'document');
+  };
+
+  // Création / Modification Utilisateur
+  document.getElementById('formNewUser')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const editId = form.dataset.editUserId;
+    const name = document.getElementById('usrName').value.trim();
+    const email = document.getElementById('usrEmail').value.trim();
+    const role = document.getElementById('usrRole').value;
+    const service = document.getElementById('usrService').value;
+    const phone = document.getElementById('usrPhone').value.trim() || null;
+    const officeLocation = document.getElementById('usrOffice').value.trim() || null;
+    const password = document.getElementById('usrPassword')?.value || '';
+    const permissions = [...document.querySelectorAll('.js-usr-perm-check:checked')].map(cb => cb.value);
+
+    const payload = { name, email, role, service, phone, office_location: officeLocation, permissions };
+    if (!editId || password) payload.password = password;
+
+    const res = await fetch(editId ? `/api/users/${editId}` : '/api/users', {
+      method: editId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    if (res.ok && result.success) {
+      showToast(result.message || 'Utilisateur enregistré !', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('modalNewUser'))?.hide();
+      resetUserModalMode();
+      await BackendApi.loadUsers();
+    } else {
+      const msg = Object.values(result.errors || {}).flat()[0] || result.message || 'Opération impossible.';
+      showToast(msg, 'danger');
+    }
+  });
+
+  // Réinitialisation mot de passe utilisateur par l'admin
+  document.getElementById('formResetUserPassword')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const userId = document.getElementById('resetTargetUserId').value;
+    const password = document.getElementById('resetTargetUserPassword').value;
+    const res = await fetch(`/api/users/${userId}/reset-password`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    showToast(data.message || 'Mot de passe réinitialisé.', res.ok ? 'success' : 'danger');
+    if (res.ok) bootstrap.Modal.getInstance(document.getElementById('modalResetUserPassword'))?.hide();
+  });
+
+  // Impression A4 Bon Officiel
+  document.getElementById('btnPrintPdfDoc')?.addEventListener('click', () => {
+    const printableDocument = document.getElementById('printablePdfDocument');
+    const reference = printableDocument?.dataset.reference;
+    if (!printableDocument || !reference) return;
+    const previousTitle = document.title;
+    document.title = `Bon_${reference}`;
+    document.body.classList.add('printing-official-bon');
+    const cleanup = () => {
+      document.title = previousTitle;
+      document.body.classList.remove('printing-official-bon');
+    };
+    window.addEventListener('afterprint', cleanup, { once: true });
+    window.print();
+    setTimeout(cleanup, 60000);
+  });
+
+  // Impression A4 Rapport Officiel
+  document.getElementById('btnPrintReportDoc')?.addEventListener('click', () => {
+    const printableReport = document.getElementById('printableReportDocument');
+    if (!printableReport) return;
+    const previousTitle = document.title;
+    document.title = printableReport.dataset.reference || 'Rapport_GESTION+';
+    document.body.classList.add('printing-report');
+    const cleanup = () => {
+      document.title = previousTitle;
+      document.body.classList.remove('printing-report');
+    };
+    window.addEventListener('afterprint', cleanup, { once: true });
+    window.print();
+    setTimeout(cleanup, 60000);
   });
 }
 
 /* ==========================================================================
-   8. Système de Notifications Toast
+   9. Filtres Dynamiques des Tableaux & Recherche Globale Topbar
    ========================================================================== */
+function setupTableFilters() {
+  // Stock articles
+  const applyStockFilter = () => {
+    const query = (document.getElementById('searchStockInput')?.value || '').toLowerCase();
+    const cat = document.getElementById('filterStockCategory')?.value || '';
+    const status = document.getElementById('filterStockStatus')?.value || '';
+    document.querySelectorAll('#articlesStockTableBody tr[data-cat]').forEach(tr => {
+      const matchQuery = !query || tr.innerText.toLowerCase().includes(query);
+      const matchCat = !cat || tr.getAttribute('data-cat') === cat;
+      const matchStatus = !status || tr.getAttribute('data-status') === status;
+      tr.style.display = matchQuery && matchCat && matchStatus ? '' : 'none';
+    });
+  };
+  document.getElementById('searchStockInput')?.addEventListener('input', applyStockFilter);
+  document.getElementById('filterStockCategory')?.addEventListener('change', applyStockFilter);
+  document.getElementById('filterStockStatus')?.addEventListener('change', applyStockFilter);
+
+  // Mouvements de stock (type + dates + texte)
+  const applyMvtFilter = () => {
+    const type = document.getElementById('filterMovementType')?.value || '';
+    const from = document.getElementById('filterMvtFrom')?.value || '';
+    const to = document.getElementById('filterMvtTo')?.value || '';
+    const query = (document.getElementById('searchMovementInput')?.value || '').toLowerCase();
+    document.querySelectorAll('#stockMovementsTableBody tr[data-type]').forEach(tr => {
+      const rowType = tr.getAttribute('data-type') || '';
+      const rowDate = tr.getAttribute('data-date') || '';
+      const matchType = !type || rowType === type;
+      const matchFrom = !from || (rowDate && rowDate >= from);
+      const matchTo = !to || (rowDate && rowDate <= to);
+      const matchQuery = !query || tr.innerText.toLowerCase().includes(query);
+      tr.style.display = matchType && matchFrom && matchTo && matchQuery ? '' : 'none';
+    });
+  };
+  document.getElementById('filterMovementType')?.addEventListener('change', applyMvtFilter);
+  document.getElementById('filterMvtFrom')?.addEventListener('change', applyMvtFilter);
+  document.getElementById('filterMvtTo')?.addEventListener('change', applyMvtFilter);
+  document.getElementById('searchMovementInput')?.addEventListener('input', applyMvtFilter);
+
+  // Documents administratifs
+  const applyDocFilter = () => {
+    const query = (document.getElementById('searchDocsInput')?.value || '').toLowerCase();
+    const cat = document.getElementById('filterDocCategory')?.value || '';
+    const type = document.getElementById('filterDocType')?.value || '';
+    const srv = document.getElementById('filterDocService')?.value || '';
+    document.querySelectorAll('#documentsTableBody tr[data-cat]').forEach(tr => {
+      const ok = (!query || tr.innerText.toLowerCase().includes(query))
+        && (!cat || tr.getAttribute('data-cat') === cat)
+        && (!type || tr.getAttribute('data-type') === type)
+        && (!srv || tr.getAttribute('data-service') === srv);
+      tr.style.display = ok ? '' : 'none';
+    });
+  };
+  document.getElementById('searchDocsInput')?.addEventListener('input', applyDocFilter);
+  document.getElementById('filterDocCategory')?.addEventListener('change', applyDocFilter);
+  document.getElementById('filterDocType')?.addEventListener('change', applyDocFilter);
+  document.getElementById('filterDocService')?.addEventListener('change', applyDocFilter);
+
+  // Utilisateurs
+  const applyUserFilter = () => {
+    const query = (document.getElementById('searchUsersInput')?.value || '').toLowerCase();
+    const role = document.getElementById('filterUserRole')?.value || '';
+    const status = document.getElementById('filterUserStatus')?.value || '';
+    document.querySelectorAll('#usersTableBody tr[data-role]').forEach(tr => {
+      const ok = (!query || tr.innerText.toLowerCase().includes(query))
+        && (!role || tr.getAttribute('data-role') === role)
+        && (!status || tr.getAttribute('data-active') === status);
+      tr.style.display = ok ? '' : 'none';
+    });
+  };
+  document.getElementById('searchUsersInput')?.addEventListener('input', applyUserFilter);
+  document.getElementById('filterUserRole')?.addEventListener('change', applyUserFilter);
+  document.getElementById('filterUserStatus')?.addEventListener('change', applyUserFilter);
+
+  // Toutes les demandes
+  const applyRequestsFilter = () => {
+    const status = document.getElementById('filterReqStatus')?.value || '';
+    const cat = document.getElementById('filterReqCategory')?.value || '';
+    const urg = document.getElementById('filterReqUrgency')?.value || '';
+    const query = (document.getElementById('searchRequestsInput')?.value || '').toLowerCase();
+    document.querySelectorAll('#allRequestsTableBody tr[data-status]').forEach(tr => {
+      const rowStatus = tr.getAttribute('data-status') || '';
+      const rowOverdue = tr.getAttribute('data-overdue') === '1';
+      const matchStatus = !status || (status === '__OVERDUE__' ? rowOverdue : rowStatus === status);
+      const matchCat = !cat || tr.getAttribute('data-category') === cat;
+      const matchUrg = !urg || tr.getAttribute('data-urgency') === urg;
+      const matchQuery = !query || tr.innerText.toLowerCase().includes(query);
+      tr.style.display = matchStatus && matchCat && matchUrg && matchQuery ? '' : 'none';
+    });
+  };
+  document.getElementById('filterReqStatus')?.addEventListener('change', applyRequestsFilter);
+  document.getElementById('filterReqCategory')?.addEventListener('change', applyRequestsFilter);
+  document.getElementById('filterReqUrgency')?.addEventListener('change', applyRequestsFilter);
+  document.getElementById('searchRequestsInput')?.addEventListener('input', applyRequestsFilter);
+
+  // Patrimoine & Dépenses
+  const applyAssetFilter = () => {
+    const cond = document.getElementById('filterAssetCondition')?.value || '';
+    const avail = document.getElementById('filterAssetAvailability')?.value || '';
+    const q = (document.getElementById('searchAssetInput')?.value || '').toLowerCase();
+    document.querySelectorAll('#assetsTableBody tr[data-condition]').forEach(tr => {
+      const ok = (!cond || tr.getAttribute('data-condition') === cond)
+        && (!avail || tr.getAttribute('data-availability') === avail)
+        && (!q || tr.innerText.toLowerCase().includes(q));
+      tr.style.display = ok ? '' : 'none';
+    });
+  };
+  document.getElementById('filterAssetCondition')?.addEventListener('change', applyAssetFilter);
+  document.getElementById('filterAssetAvailability')?.addEventListener('change', applyAssetFilter);
+  document.getElementById('searchAssetInput')?.addEventListener('input', applyAssetFilter);
+
+  const applyExpenseFilter = () => {
+    const scope = document.getElementById('filterExpenseScope')?.value || '';
+    const q = (document.getElementById('searchExpenseInput')?.value || '').toLowerCase();
+    document.querySelectorAll('#expensesTableBody tr[data-status]').forEach(tr => {
+      let matchScope = true;
+      if (scope === 'unjustified') matchScope = tr.getAttribute('data-unjustified') === '1';
+      else if (scope === 'overrun') matchScope = tr.getAttribute('data-overrun') === '1';
+      else if (scope) matchScope = tr.getAttribute('data-status') === scope;
+      const matchQ = !q || tr.innerText.toLowerCase().includes(q);
+      tr.style.display = matchScope && matchQ ? '' : 'none';
+    });
+  };
+  document.getElementById('filterExpenseScope')?.addEventListener('change', applyExpenseFilter);
+  document.getElementById('searchExpenseInput')?.addEventListener('input', applyExpenseFilter);
+}
+
+function setupSearchGlobal() {
+  const globalInput = document.getElementById('topbarGlobalSearch');
+  const dropdown = document.getElementById('globalSearchResultsDropdown');
+  if (!globalInput) return;
+
+  const closeDropdown = () => { if (dropdown) dropdown.style.display = 'none'; };
+
+  globalInput.addEventListener('input', () => {
+    if (!dropdown) return;
+    const q = globalInput.value.trim().toLowerCase();
+    if (q.length < 2) {
+      closeDropdown();
+      return;
+    }
+
+    const matches = [];
+    (AppState.currentRequests || []).forEach(r => {
+      if (`${r.reference} ${r.motif} ${r.category} ${r.user?.name || ''}`.toLowerCase().includes(q)) {
+        matches.push({ icon: 'bi-file-earmark-text text-primary', title: `${r.reference} — ${r.motif}`, sub: `Demande • ${r.status}`, action: () => openRequestDetail(r.reference) });
+      }
+    });
+    (AppState.currentArticles || []).forEach(a => {
+      if (`${a.code} ${a.name} ${a.category}`.toLowerCase().includes(q)) {
+        matches.push({ icon: 'bi-box-seam text-success', title: `${a.code} — ${a.name}`, sub: `Stock : ${a.quantity} ${a.unit}`, action: () => navigateToView('stock-articles') });
+      }
+    });
+    if (AppState.canManageOps) {
+      (AppState.currentAssets || []).forEach(as => {
+        if (`${as.inventory_number} ${as.name} ${as.serial_number || ''}`.toLowerCase().includes(q)) {
+          matches.push({ icon: 'bi-pc-display text-info', title: `${as.inventory_number} — ${as.name}`, sub: `Patrimoine • ${as.condition}`, action: () => { navigateToView('operations'); openAssetModal(as.id, 'history'); } });
+        }
+      });
+      (AppState.currentVehicles || []).forEach(v => {
+        if (`${v.registration_number} ${v.brand} ${v.model}`.toLowerCase().includes(q)) {
+          matches.push({ icon: 'bi-truck text-warning', title: `${v.registration_number} — ${v.brand} ${v.model}`, sub: `Parc auto • ${v.status}`, action: () => { navigateToView('operations'); openVehicleModal(v.id, 'history'); } });
+        }
+      });
+    }
+
+    if (!matches.length) {
+      dropdown.innerHTML = '<div class="p-3 text-muted small text-center">Aucun résultat correspondant.</div>';
+    } else {
+      dropdown.innerHTML = matches.slice(0, 8).map((m, idx) => `
+        <button type="button" class="btn text-start w-100 px-3 py-2 border-bottom d-flex align-items-center gap-2 js-global-hit" data-hit-idx="${idx}">
+          <i class="bi ${m.icon} fs-5"></i>
+          <div><div class="fw-semibold small text-dark">${escHtml(m.title)}</div><small class="text-muted">${escHtml(m.sub)}</small></div>
+        </button>
+      `).join('');
+      dropdown.querySelectorAll('.js-global-hit').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const hit = matches[Number(btn.dataset.hitIdx)];
+          closeDropdown();
+          globalInput.value = '';
+          hit?.action();
+        });
+      });
+    }
+    dropdown.style.display = 'block';
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.topbar-search-wrapper')) closeDropdown();
+  });
+}
+
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
 
-  const toastId = 'toast-' + Date.now();
   let bgClass = 'text-bg-dark';
   let icon = 'bi-info-circle-fill text-info';
-
-  if (type === 'success') {
-    bgClass = 'text-bg-success';
-    icon = 'bi-check-circle-fill';
-  } else if (type === 'warning') {
-    bgClass = 'text-bg-warning text-dark';
-    icon = 'bi-exclamation-triangle-fill';
-  } else if (type === 'error') {
-    bgClass = 'text-bg-danger';
-    icon = 'bi-x-circle-fill';
-  }
+  if (type === 'success') { bgClass = 'text-bg-success'; icon = 'bi-check-circle-fill'; }
+  else if (type === 'warning') { bgClass = 'text-bg-warning text-dark'; icon = 'bi-exclamation-triangle-fill'; }
+  else if (type === 'error' || type === 'danger') { bgClass = 'text-bg-danger'; icon = 'bi-x-circle-fill'; }
 
   const toastEl = document.createElement('div');
   toastEl.className = `toast align-items-center ${bgClass} border-0 shadow-lg mb-2`;
-  toastEl.id = toastId;
   toastEl.setAttribute('role', 'alert');
-  toastEl.setAttribute('aria-live', 'assertive');
-  toastEl.setAttribute('aria-atomic', 'true');
   toastEl.innerHTML = `
     <div class="d-flex">
       <div class="toast-body d-flex align-items-center gap-2 py-2 px-3">
         <i class="bi ${icon} fs-5"></i>
-        <span>${message}</span>
+        <span>${escHtml(message)}</span>
       </div>
       <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
     </div>
   `;
-
   container.appendChild(toastEl);
-  const bsToast = new bootstrap.Toast(toastEl, { delay: 4000 });
+  const bsToast = new bootstrap.Toast(toastEl, { delay: 4200 });
   bsToast.show();
-
-  toastEl.addEventListener('hidden.bs.toast', () => {
-    toastEl.remove();
-  });
-}
-
-function getFormattedTime() {
-  const now = new Date();
-  return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
 }
 
 /* ==========================================================================
-   9. Gestion de l'Authentification (Inscription, Connexion, Déconnexion) & Paramètres
+   10. Authentification, Profil, Paramètres, Référentiels, Audit & Sauvegardes
    ========================================================================== */
 function setupAuthAndSettingsHandlers() {
-  document.querySelectorAll('[data-password-toggle]').forEach((toggleButton) => {
-    const passwordInput = document.getElementById(toggleButton.dataset.passwordToggle);
-    if (!passwordInput) return;
+  // Mot de passe oublié
+  document.getElementById('linkForgotPassword')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const loginEmail = document.getElementById('loginEmail')?.value.trim() || '';
+    const forgotIn = document.getElementById('forgotPasswordEmail');
+    if (forgotIn && loginEmail) forgotIn.value = loginEmail;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalForgotPassword')).show();
+  });
 
-    toggleButton.addEventListener('click', () => {
-      const shouldShowPassword = passwordInput.type === 'password';
-      passwordInput.type = shouldShowPassword ? 'text' : 'password';
-
-      const label = shouldShowPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe';
-      const icon = toggleButton.querySelector('i');
-      toggleButton.setAttribute('aria-label', label);
-      toggleButton.setAttribute('aria-pressed', String(shouldShowPassword));
-      toggleButton.setAttribute('title', label);
-      icon?.classList.toggle('bi-eye', !shouldShowPassword);
-      icon?.classList.toggle('bi-eye-slash', shouldShowPassword);
-    });
+  document.getElementById('formForgotPassword')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('forgotPasswordEmail')?.value.trim();
+    if (!email) return;
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      showToast(data.message || 'Demande transmise à l’administrateur.', res.ok ? 'success' : 'warning');
+      if (res.ok) bootstrap.Modal.getInstance(document.getElementById('modalForgotPassword'))?.hide();
+    } catch (err) {
+      showToast('Impossible de traiter votre demande pour le moment. Veuillez réessayer.', 'danger');
+    }
   });
 
   // Inscription
-  const formRegister = document.getElementById('formRegisterUser');
-  if (formRegister) {
-    formRegister.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const pwd = document.getElementById('regPassword').value;
-      const pwdConfirm = document.getElementById('regPasswordConfirm').value;
+  document.getElementById('formRegisterUser')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pwd = document.getElementById('regPassword').value;
+    const pwdConfirm = document.getElementById('regPasswordConfirm').value;
+    if (pwd !== pwdConfirm) {
+      showToast('Les deux mots de passe ne correspondent pas.', 'danger');
+      return;
+    }
 
-      if (pwd !== pwdConfirm) {
-        showToast('Les deux mots de passe ne correspondent pas.', 'danger');
-        return;
+    const name = document.getElementById('regNom').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    const service = document.getElementById('regService').value;
+    const role = document.getElementById('regRole')?.value || 'Collaborateur';
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, service, role, password: pwd })
+      });
+      const result = await res.json();
+      if (res.ok && result.success && result.user && result.token) {
+        sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
+        sessionStorage.setItem('gestion_token', result.token);
+        applyUser(result.user);
+        showToast(result.message || `Compte créé avec succès pour ${name} !`, 'success');
+        navigateToView('dashboard');
+        await BackendApi.loadAllData();
+      } else {
+        const msg = Object.values(result.errors || {}).flat()[0] || result.message || 'Erreur lors de la création du compte.';
+        showToast(msg, 'danger');
       }
-
-      const name = document.getElementById('regNom').value.trim();
-      const email = document.getElementById('regEmail').value.trim();
-      const service = document.getElementById('regService').value;
-      const matricule = document.getElementById('regMatricule')?.value.trim() || '';
-      const role = document.getElementById('regRole')?.value || 'Collaborateur';
-
-      try {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ name, email, service, matricule, role, password: pwd })
-        });
-        const result = await res.json();
-        if (result.success && result.user && result.token) {
-          sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
-          sessionStorage.setItem('gestion_token', result.token);
-          applyUser(result.user);
-          showToast(result.message || `Compte créé avec succès pour ${name} !`, 'success');
-          navigateToView('dashboard');
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.loadAllData();
-          }
-          return;
-        } else {
-          showToast(result.message || 'Erreur lors de la création du compte.', 'danger');
-          return;
-        }
-      } catch (err) {
-        console.warn('Register error:', err);
-      }
-
-      showToast('Impossible de contacter le serveur. Le compte n’a pas été créé.', 'danger');
-    });
-  }
+    } catch (err) {
+      showToast('Impossible de finaliser l’inscription pour le moment. Veuillez réessayer.', 'danger');
+    }
+  });
 
   // Connexion
-  const formLogin = document.getElementById('formLoginUser');
-  if (formLogin) {
-    formLogin.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = document.getElementById('loginEmail').value.trim();
-      const password = document.getElementById('loginPassword').value;
+  document.getElementById('formLoginUser')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
 
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
-        const result = await res.json();
-        if (result.success && result.user && result.token) {
-          sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
-          sessionStorage.setItem('gestion_token', result.token);
-          applyUser(result.user);
-          showToast(`Bienvenue ${result.user.name} ! Bon retour sur votre espace.`, 'success');
-          navigateToView('dashboard');
-          if (typeof BackendApi !== 'undefined') {
-            await BackendApi.loadAllData();
-          }
-          return;
-        } else {
-          showToast(result.message || 'Identifiants invalides (email ou mot de passe incorrect).', 'danger');
-          return;
-        }
-      } catch (err) {
-        console.warn('Login error:', err);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const result = await res.json();
+      if (res.ok && result.success && result.user && result.token) {
+        sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
+        sessionStorage.setItem('gestion_token', result.token);
+        applyUser(result.user);
+        showToast(`Bienvenue ${result.user.name} !`, 'success');
+        navigateToView('dashboard');
+        await BackendApi.loadAllData();
+      } else {
+        showToast(result.message || 'Identifiants invalides.', 'danger');
       }
+    } catch (err) {
+      showToast('Connexion impossible pour le moment. Vérifiez votre accès réseau et réessayez.', 'danger');
+    }
+  });
 
-      showToast('Impossible de contacter le serveur d\'authentification.', 'danger');
-    });
-  }
-
-  // Paramètres : Gestion des onglets
-  const settingsPills = document.querySelectorAll('.settings-pill-btn');
+  // Onglets Paramètres (strictement scopés sur #view-settings)
+  const settingsPills = document.querySelectorAll('#view-settings [data-settings-tab]');
   settingsPills.forEach(btn => {
     btn.addEventListener('click', () => {
       settingsPills.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
       const targetPane = btn.getAttribute('data-settings-tab');
-      document.querySelectorAll('.settings-tab-pane').forEach(pane => {
-        pane.style.display = 'none';
-      });
-
+      document.querySelectorAll('#view-settings .settings-tab-pane').forEach(pane => { pane.style.display = 'none'; });
       const activePane = document.getElementById(`settingsPane-${targetPane}`);
-      if (activePane) {
-        activePane.style.display = 'block';
+      if (activePane) activePane.style.display = 'block';
+    });
+  });
+
+  // Enregistrement des paramètres système (Module 10)
+  document.getElementById('btnSaveSettings')?.addEventListener('click', async () => {
+    const settings = [
+      { key: 'company_name', value: document.getElementById('settingOrgName')?.value || '', group: 'general' },
+      { key: 'company_short_code', value: document.getElementById('settingOrgAcronym')?.value || '', group: 'general' },
+      { key: 'currency', value: document.getElementById('settingCurrency')?.value || 'XOF', group: 'general' },
+      { key: 'timezone', value: document.getElementById('settingTimezone')?.value || 'Africa/Abidjan', group: 'general' },
+      { key: 'company_address', value: document.getElementById('settingOrgAddress')?.value || '', group: 'general' },
+      { key: 'company_phone', value: document.getElementById('settingOrgContact')?.value || '', group: 'general' },
+      { key: 'default_min_threshold', value: document.getElementById('settingDefaultStockThreshold')?.value || '5', group: 'stock' },
+      { key: 'default_max_threshold', value: document.getElementById('settingDefaultMaxThreshold')?.value || '100', group: 'stock' },
+      { key: 'inventory_frequency', value: document.getElementById('settingInventoryFrequency')?.value || 'monthly', group: 'stock' },
+      { key: 'notify_on_low_stock', value: document.getElementById('switchAlertEmail')?.checked ? '1' : '0', group: 'notifications' },
+      { key: 'block_zero_stock', value: document.getElementById('switchBlockZeroStock')?.checked ? '1' : '0', group: 'stock' },
+      { key: 'validation_levels', value: document.getElementById('settingValidationLevels')?.value || '2', group: 'workflow' },
+      { key: 'sla_processing_hours', value: document.getElementById('settingRequestSlaHours')?.value || '48', group: 'workflow' },
+      { key: 'notify_on_request_submitted', value: document.getElementById('switchNotifyOnSubmit')?.checked ? '1' : '0', group: 'notifications' },
+      { key: 'notify_on_request_decision', value: document.getElementById('switchNotifyRequester')?.checked ? '1' : '0', group: 'notifications' },
+      { key: 'notify_on_vehicle_alert', value: document.getElementById('switchNotifyMaintenance')?.checked ? '1' : '0', group: 'notifications' },
+      { key: 'notify_on_expense_overrun', value: document.getElementById('switchNotifyExpenseOverrun')?.checked ? '1' : '0', group: 'notifications' },
+      { key: 'session_timeout_minutes', value: document.getElementById('settingSessionTimeout')?.value || '60', group: 'security' },
+      { key: 'password_expiry_days', value: document.getElementById('settingPasswordExpiry')?.value || '90', group: 'security' }
+    ];
+
+    const res = await fetch('/api/operations/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings })
+    });
+    const data = await res.json();
+    showToast(data.message || 'Paramètres enregistrés.', res.ok ? 'success' : 'danger');
+    if (res.ok) await BackendApi.loadCatalogReferences();
+  });
+
+  // Formulaires d'ajout aux 6 référentiels métier
+  document.querySelectorAll('.js-ref-create-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const endpoint = form.getAttribute('data-ref-endpoint');
+      if (!endpoint) return;
+      const payload = Object.fromEntries([...new FormData(form).entries()].filter(([, v]) => v !== ''));
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      showToast(data.message || (res.ok ? 'Élément ajouté.' : 'Ajout impossible.'), res.ok ? 'success' : 'danger');
+      if (res.ok) {
+        form.reset();
+        await BackendApi.loadAdminSettingsAndRefs();
+        await BackendApi.loadCatalogReferences();
       }
     });
   });
 
-  // Sauvegarde des paramètres
-  const btnSaveSettings = document.getElementById('btnSaveSettings');
-  if (btnSaveSettings) {
-    btnSaveSettings.addEventListener('click', () => {
-      showToast('Paramètres et seuils système enregistrés avec succès !', 'success');
+  // Délégation de validation
+  document.getElementById('formNewDelegation')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const delegatorId = document.getElementById('delegationDelegatorSelect').value;
+    const delegateId = document.getElementById('delegationDelegateSelect').value;
+    const startsAt = document.getElementById('delegationStartDate').value;
+    const endsAt = document.getElementById('delegationEndDate').value;
+    const notes = document.getElementById('delegationReason').value.trim();
+
+    const res = await fetch('/api/operations/reference-data/delegations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        delegator_id: Number(delegatorId),
+        delegate_id: Number(delegateId),
+        scope: 'Toutes les demandes',
+        starts_at: startsAt,
+        ends_at: endsAt || null,
+        notes
+      })
     });
+    const data = await res.json();
+    showToast(data.message || 'Délégation enregistrée.', res.ok ? 'success' : 'danger');
+    if (res.ok) {
+      e.currentTarget.reset();
+      await BackendApi.loadAdminSettingsAndRefs();
+    }
+  });
+
+  // Filtres Journal d'audit
+  const reloadAudit = () => BackendApi.loadAuditLogs();
+  document.getElementById('btnRefreshAuditLogs')?.addEventListener('click', reloadAudit);
+  document.getElementById('filterAuditModule')?.addEventListener('change', reloadAudit);
+  document.getElementById('filterAuditFrom')?.addEventListener('change', reloadAudit);
+  document.getElementById('filterAuditTo')?.addEventListener('change', reloadAudit);
+  document.getElementById('filterAuditSearch')?.addEventListener('input', reloadAudit);
+
+  // Sauvegardes & Restauration (Module 9)
+  document.getElementById('btnCreateBackupNow')?.addEventListener('click', async () => {
+    const res = await fetch('/api/backups', { method: 'POST' });
+    const data = await res.json();
+    showToast(data.message || 'Sauvegarde générée.', res.ok ? 'success' : 'danger');
+    if (res.ok) await BackendApi.loadBackups();
+  });
+
+  document.getElementById('formRestoreUploadedBackup')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = document.getElementById('inputBackupRestoreFile')?.files?.[0];
+    if (!file) {
+      showToast('Veuillez sélectionner un fichier de sauvegarde.', 'warning');
+      return;
+    }
+    if (!confirm('Confirmez-vous la restauration de cette archive ? Les tables métier seront remplacées par le contenu de la sauvegarde.')) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/backups/restore', { method: 'POST', body: fd });
+    const data = await res.json();
+    showToast(data.message || 'Restauration terminée.', res.ok ? 'success' : 'danger');
+    if (res.ok) {
+      e.currentTarget.reset();
+      await BackendApi.refreshAll({ showIndicator: true, silent: true });
+    }
+  });
+
+  // Profil utilisateur & changement de mot de passe
+  document.getElementById('formUserProfile')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('profileInputName').value.trim();
+    const email = document.getElementById('profileInputEmail').value.trim();
+    const phone = document.getElementById('profileInputPhone')?.value.trim() || null;
+    const officeLocation = document.getElementById('profileInputOffice')?.value.trim() || null;
+    const currentPassword = document.getElementById('profileCurrentPassword')?.value || '';
+    const newPassword = document.getElementById('profileNewPassword')?.value || '';
+    const confirmPassword = document.getElementById('profileConfirmPassword')?.value || '';
+
+    if (newPassword && newPassword !== confirmPassword) {
+      showToast('La confirmation du nouveau mot de passe ne correspond pas.', 'danger');
+      return;
+    }
+
+    const payload = { name, email, phone, office_location: officeLocation };
+    if (newPassword) {
+      payload.current_password = currentPassword;
+      payload.password = newPassword;
+      payload.password_confirmation = confirmPassword;
+    }
+
+    const res = await fetch('/api/auth/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      sessionStorage.setItem('gestion_user', JSON.stringify(data.user));
+      applyUser(data.user);
+      if (document.getElementById('profileCurrentPassword')) document.getElementById('profileCurrentPassword').value = '';
+      if (document.getElementById('profileNewPassword')) document.getElementById('profileNewPassword').value = '';
+      if (document.getElementById('profileConfirmPassword')) document.getElementById('profileConfirmPassword').value = '';
+      showToast(data.message || 'Profil mis à jour avec succès.', 'success');
+    } else {
+      const msg = Object.values(data.errors || {}).flat()[0] || data.message || 'Mise à jour impossible.';
+      showToast(msg, 'danger');
+    }
+  });
+}
+
+window.restoreExistingBackup = async function (backupId, ref) {
+  if (!confirm(`Restaurer la sauvegarde ${ref} ?`)) return;
+  const res = await fetch('/api/backups/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup_id: backupId })
+  });
+  const data = await res.json();
+  showToast(data.message || 'Restauration effectuée.', res.ok ? 'success' : 'danger');
+  if (res.ok) await BackendApi.refreshAll({ showIndicator: true, silent: true });
+};
+
+window.toggleReferenceItemActive = async function (endpoint, currentActive) {
+  const res = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_active: !currentActive })
+  });
+  if (res.ok) {
+    await BackendApi.loadAdminSettingsAndRefs();
+    await BackendApi.loadCatalogReferences();
+  }
+};
+
+function populateRelationSelectors(requests = [], articles = [], assignees = []) {
+  const fillSelect = (id, rows, labelBuilder, placeholder) => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const previousValue = select.value;
+    select.innerHTML = `<option value="">${placeholder}</option>` + rows.map(row => `<option value="${row.id}">${escHtml(labelBuilder(row))}</option>`).join('');
+    if ([...select.options].some(option => option.value === previousValue)) select.value = previousValue;
+  };
+
+  const selectableRequests = requests.filter(r => !['Brouillon', 'Annulée', 'Rejetée'].includes(r.status));
+  const authorizedRequests = requests.filter(r => AUTHORIZED_REQUEST_STATUSES.includes(r.status));
+  fillSelect('expenseRequestSelect', selectableRequests, r => `${r.reference} — ${r.motif} (${r.service})`, 'Sélectionner une demande…');
+  fillSelect('mvtRequestId', authorizedRequests, r => `${r.reference} — ${r.user?.name || r.service}`, 'Aucune (Entrée / Transfert / Urgence)');
+  fillSelect('inventoryArticleSelect', articles, a => `${a.code} — ${a.name} (théorique : ${a.quantity})`, 'Choisir un article à ajouter…');
+  fillSelect('assignAgentSelect', assignees, u => `${u.name} — ${u.service || 'Sans service'}`, 'Sélectionner un agent…');
+  fillSelect('vehicleDriverSelect', assignees, u => `${u.name} (${u.service || 'Conducteur'})`, 'Aucun conducteur');
+}
+
+function applyCatalogReferencesToSelects(refs) {
+  if (!refs) return;
+
+  const fillNamedOptions = (selectId, items, keepEmptyFirst = null) => {
+    const sel = document.getElementById(selectId);
+    if (!sel || !items?.length) return;
+    const prev = sel.value;
+    const prefix = keepEmptyFirst !== null ? `<option value="">${keepEmptyFirst}</option>` : '';
+    sel.innerHTML = prefix + items.map(it => `<option value="${escHtml(it.name)}">${escHtml(it.name)}</option>`).join('');
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  };
+
+  if (refs.departments?.length) {
+    fillNamedOptions('selectRequestService', refs.departments);
+    fillNamedOptions('usrService', refs.departments);
+    fillNamedOptions('regService', refs.departments);
+    fillNamedOptions('fpDocService', refs.departments);
+    fillNamedOptions('filterDocService', refs.departments, 'Tous les services');
+    fillNamedOptions('reportFilterService', refs.departments, 'Tous les services');
   }
 
-  // Sauvegarde du profil
-  const formProfile = document.getElementById('formUserProfile');
-  if (formProfile) {
-    formProfile.addEventListener('submit', (e) => {
-      e.preventDefault();
-      showToast('Vos informations de profil et préférences ont été mises à jour.', 'success');
-    });
+  if (refs.request_categories?.length) {
+    fillNamedOptions('selectRequestCategory', refs.request_categories);
+    fillNamedOptions('filterReqCategory', refs.request_categories, 'Toutes les catégories');
+    fillNamedOptions('reportFilterCategory', refs.request_categories, 'Toutes catégories');
+  }
+
+  if (refs.article_categories?.length) {
+    fillNamedOptions('artCategory', refs.article_categories);
+    fillNamedOptions('filterStockCategory', refs.article_categories, 'Toutes catégories');
+  }
+
+  if (refs.units?.length) {
+    const unitSel = document.getElementById('artUnit');
+    if (unitSel) {
+      const prev = unitSel.value;
+      unitSel.innerHTML = refs.units.map(u => `<option value="${escHtml(u.name)}">${escHtml(u.name)}${u.symbol ? ` (${escHtml(u.symbol)})` : ''}</option>`).join('');
+      if ([...unitSel.options].some(o => o.value === prev)) unitSel.value = prev;
+    }
+  }
+
+  if (refs.locations?.length) {
+    const dlLoc = document.getElementById('datalistLocations');
+    if (dlLoc) dlLoc.innerHTML = refs.locations.map(l => `<option value="${escHtml(l.name)}"></option>`).join('');
+  }
+
+  if (refs.suppliers?.length) {
+    const dlSup = document.getElementById('datalistSuppliers');
+    if (dlSup) dlSup.innerHTML = refs.suppliers.map(s => `<option value="${escHtml(s.name)}"></option>`).join('');
+    const expSup = document.getElementById('expenseSupplierSelect');
+    if (expSup) {
+      const prev = expSup.value;
+      expSup.innerHTML = '<option value="">Aucun / Bénéficiaire interne</option>' + refs.suppliers.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+      if ([...expSup.options].some(o => o.value === prev)) expSup.value = prev;
+    }
   }
 }
 
+function setupOperationsCenter() {
+  document.querySelectorAll('[data-operations-tab]').forEach(button => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('[data-operations-tab]').forEach(item => item.classList.remove('active'));
+      document.querySelectorAll('.operations-tab-pane').forEach(pane => { pane.style.display = 'none'; });
+      button.classList.add('active');
+      const pane = document.getElementById(`operationsPane-${button.dataset.operationsTab}`);
+      if (pane) pane.style.display = 'block';
+    });
+  });
+
+  // Création Bien du patrimoine
+  document.getElementById('formNewAsset')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const payload = Object.fromEntries([...new FormData(form).entries()].filter(([, v]) => v !== ''));
+    const res = await fetch('/api/assets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    showToast(data.message || (res.ok ? 'Bien enregistré.' : 'Enregistrement impossible.'), res.ok ? 'success' : 'danger');
+    if (res.ok) { form.reset(); await BackendApi.loadOperations(); }
+  });
+
+  // Création Véhicule
+  document.getElementById('formNewVehicle')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const payload = Object.fromEntries([...new FormData(form).entries()].filter(([, v]) => v !== ''));
+    const res = await fetch('/api/vehicles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    showToast(data.message || (res.ok ? 'Véhicule enregistré.' : 'Enregistrement impossible.'), res.ok ? 'success' : 'danger');
+    if (res.ok) { form.reset(); await BackendApi.loadOperations(); }
+  });
+
+  // Création Dépense (FormData pour supporter les pièces justificatives multiples + autorisation directe auto)
+  document.getElementById('formNewExpense')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    for (const [key, val] of [...fd.entries()]) {
+      if (val === '' && key !== 'attachments[]') fd.delete(key);
+    }
+    const res = await fetch('/api/expenses', { method: 'POST', body: fd });
+    const data = await res.json();
+    showToast(data.message || (res.ok ? 'Dépense enregistrée.' : 'Enregistrement impossible.'), res.ok ? 'success' : 'danger');
+    if (res.ok) { form.reset(); await BackendApi.loadOperations(); }
+  });
+
+  // Inventaire physique multi-articles (Général ou Partiel)
+  document.getElementById('btnAddInventoryLine')?.addEventListener('click', () => {
+    const artId = document.getElementById('inventoryArticleSelect')?.value;
+    if (!artId) {
+      showToast('Choisissez un article à ajouter au comptage.', 'warning');
+      return;
+    }
+    const art = AppState.currentArticles.find(a => Number(a.id) === Number(artId));
+    if (art) addInventoryCountingRow(art);
+  });
+
+  document.getElementById('btnLoadAllArticlesForInventory')?.addEventListener('click', () => {
+    const scopeSel = document.getElementById('inventoryScopeSelect');
+    if (scopeSel) scopeSel.value = 'Général';
+    const tbody = document.getElementById('inventoryCountingTableBody');
+    if (tbody) tbody.innerHTML = '';
+    (AppState.currentArticles || []).forEach(art => addInventoryCountingRow(art));
+    showToast(`${AppState.currentArticles.length} article(s) chargés pour l’inventaire général.`, 'info');
+  });
+
+  document.getElementById('formPhysicalInventory')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const rows = [...document.querySelectorAll('#inventoryCountingTableBody tr[data-inv-article-id]')];
+    if (rows.length === 0) {
+      showToast('Ajoutez au moins un article au comptage physique.', 'warning');
+      return;
+    }
+
+    const items = [];
+    for (const tr of rows) {
+      const articleId = Number(tr.getAttribute('data-inv-article-id'));
+      const theo = Number(tr.getAttribute('data-theoretical-qty'));
+      const phys = Number(tr.querySelector('.js-inv-physical-qty')?.value || 0);
+      const justif = tr.querySelector('.js-inv-justification')?.value.trim() || '';
+      if (phys !== theo && !justif) {
+        showToast('Veuillez renseigner une justification pour chaque ligne présentant un écart.', 'warning');
+        return;
+      }
+      items.push({ article_id: articleId, physical_quantity: phys, justification: justif || null });
+    }
+
+    const scope = document.getElementById('inventoryScopeSelect')?.value || 'Partiel';
+    const inventoryDate = document.getElementById('inventoryDateInput')?.value || new Date().toISOString().slice(0, 10);
+    const notes = document.getElementById('inventoryGeneralNotes')?.value.trim() || null;
+
+    const response = await fetch('/api/inventories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, inventory_date: inventoryDate, notes, items })
+    });
+    const data = await response.json();
+    showToast(data.message || (response.ok ? 'Inventaire enregistré.' : 'Création impossible.'), response.ok ? 'success' : 'danger');
+    if (response.ok) {
+      document.getElementById('inventoryCountingTableBody').innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Sélectionnez un article ou cliquez sur « Charger tout le stock » pour saisir le comptage physique.</td></tr>';
+      if (document.getElementById('inventoryGeneralNotes')) document.getElementById('inventoryGeneralNotes').value = '';
+      await BackendApi.loadOperations();
+    }
+  });
+
+  // Filtres et export Rapports (Module 7)
+  document.getElementById('formReportFilters')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const query = new URLSearchParams([...new FormData(event.currentTarget).entries()].filter(([, v]) => v !== '')).toString();
+    await BackendApi.loadReport(query);
+  });
+
+  document.getElementById('btnOpenReportPrintPreview')?.addEventListener('click', async () => {
+    if (!AppState.lastReportPayload) await BackendApi.loadReport();
+    openReportPreviewModal();
+  });
+
+  document.getElementById('btnExportFilteredReportCsv')?.addEventListener('click', () => {
+    const form = document.getElementById('formReportFilters');
+    const query = form ? new URLSearchParams([...new FormData(form).entries()].filter(([, v]) => v !== '')).toString() : '';
+    downloadAuthenticatedFile(`/api/reports-export${query ? `?${query}` : ''}`, 'rapport-gestion.csv');
+  });
+
+  document.getElementById('formGenerateSavedReport')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const filterForm = document.getElementById('formReportFilters');
+    const filterEntries = filterForm ? Object.fromEntries([...new FormData(filterForm).entries()].filter(([, v]) => v !== '')) : {};
+    const genEntries = Object.fromEntries([...new FormData(event.currentTarget).entries()].filter(([, v]) => v !== ''));
+    const res = await fetch('/api/reports/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...filterEntries, ...genEntries })
+    });
+    const data = await res.json();
+    showToast(data.message || 'Rapport archivé.', res.ok ? 'success' : 'danger');
+    if (res.ok) {
+      event.currentTarget.reset();
+      await BackendApi.loadReport();
+      if (data.data) openReportPreviewModal(data.data);
+    }
+  });
+}
+
 /* ==========================================================================
-   10. Pont Applicatif Backend Laravel & Base de Données MySQL
+   11. Pont Applicatif Backend Laravel & Base de Données MySQL (BackendApi)
    ========================================================================== */
 const BackendApi = {
   baseUrl: '/api',
@@ -1782,154 +4034,92 @@ const BackendApi = {
       if (res.ok) {
         const data = await res.json();
         this.isOnline = true;
-        this.isDbConnected = !!data.database_connected;
+        this.isDbConnected = Boolean(data.database_connected);
         this.updateStatusBadge(data);
 
-        // Vérifier l'état des utilisateurs en base
-        const usersRes = await fetch(`${this.baseUrl}/users`);
-        if (usersRes.ok) {
-          const uJson = await usersRes.json();
-          if (uJson.count === 0) {
-            sessionStorage.removeItem('gestion_user');
-            AppState.currentUser = null;
-            showToast('Aucun utilisateur enregistré. Créez votre compte Administrateur pour commencer.', 'info');
-            navigateToView('register');
-            return data;
-          } else if (AppState.currentUser) {
-            const exists = uJson.data.some(u => u.id === AppState.currentUser.id || u.email === AppState.currentUser.email);
-            if (!exists) {
-              sessionStorage.removeItem('gestion_user');
-              AppState.currentUser = null;
-              showToast('Ce compte n\'existe plus. Veuillez vous réinscrire ou vous connecter.', 'warning');
-              navigateToView('register');
-              return data;
-            }
-          }
+        // Charger les référentiels publics (pour formulaire d'inscription notamment)
+        await this.loadCatalogReferences(true);
+
+        if (this.isDbConnected && data.has_users === false) {
+          sessionStorage.removeItem('gestion_user');
+          sessionStorage.removeItem('gestion_token');
+          AppState.currentUser = null;
+          navigateToView('register', false);
+          return data;
         }
 
-        if (this.isDbConnected) {
-          await this.refreshAll({ showIndicator: false, silent: true });
-          this.startAutoRefresh(20000);
+        const token = sessionStorage.getItem('gestion_token');
+        if (token) {
+          const meRes = await fetch(`${this.baseUrl}/auth/me`);
+          if (!meRes.ok) {
+            sessionStorage.removeItem('gestion_user');
+            sessionStorage.removeItem('gestion_token');
+            AppState.currentUser = null;
+            showToast('Votre session a expiré ou a été révoquée. Veuillez vous reconnecter.', 'warning');
+            navigateToView('login', false);
+            return data;
+          }
+          const meJson = await meRes.json();
+          if (meJson.success && meJson.user) {
+            sessionStorage.setItem('gestion_user', JSON.stringify(meJson.user));
+            applyUser(meJson.user);
+          }
+
+          if (this.isDbConnected) {
+            await this.refreshAll({ showIndicator: false, silent: true });
+            this.startAutoRefresh(25000);
+          }
         }
         return data;
       }
     } catch (e) {
-      console.warn('Backend API non disponible en direct:', e.message);
+      console.warn('Backend API non disponible:', e.message);
       this.updateStatusBadge({ status: 'offline' });
     }
     return null;
   },
 
-  updateStatusBadge(data) {
-    let badge = document.getElementById('backendStatusBadge');
-    if (!badge) {
-      const topbarActions = document.querySelector('.topbar-actions');
-      if (topbarActions) {
-        badge = document.createElement('div');
-        badge.id = 'backendStatusBadge';
-        badge.className = 'd-none d-md-flex align-items-center gap-2 px-2 py-1 rounded-pill me-2';
-        badge.style.fontSize = '0.78rem';
-        badge.style.cursor = 'pointer';
-        badge.setAttribute('title', 'Cliquez pour voir l’état du service de données');
-        badge.addEventListener('click', () => {
-          const modalEl = document.getElementById('modalDbStatus') || this.createDbModal();
-          const modal = new bootstrap.Modal(modalEl);
-          modal.show();
-        });
-        topbarActions.insertBefore(badge, topbarActions.firstChild);
-      }
-    }
-    if (!badge) return;
-
-    if (data.status === 'online') {
-      if (data.database_connected) {
-        badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-success-subtle text-success border border-success-subtle fw-semibold';
-        badge.innerHTML = '<span class="badge-status-dot bg-success" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Données synchronisées</span>';
-      } else {
-        badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-semibold';
-        badge.innerHTML = '<span class="badge-status-dot bg-warning" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Service de données indisponible</span>';
-      }
-    } else {
-      badge.className = 'd-none d-md-flex align-items-center gap-2 px-3 py-1 rounded-pill me-2 bg-light text-muted border fw-semibold';
-      badge.innerHTML = '<span class="badge-status-dot bg-secondary" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span> <span>Mode Autonome</span>';
-    }
-  },
-
-  createDbModal() {
-    let modal = document.getElementById('modalDbStatus');
-    if (modal) return modal;
-
-    modal = document.createElement('div');
-    modal.className = 'modal fade';
-    modal.id = 'modalDbStatus';
-    modal.setAttribute('tabindex', '-1');
-    modal.innerHTML = `
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content shadow-lg border-0">
-          <div class="modal-header bg-dark text-white">
-            <h5 class="modal-title fs-6 fw-bold"><i class="bi bi-database-check me-2 text-warning"></i> État du service de données</h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body p-4">
-            <div class="alert alert-success d-flex align-items-center gap-2 mb-3">
-              <i class="bi bi-check-circle-fill fs-5"></i>
-              <div>Le service de données est connecté. Les informations affichées sont à jour.</div>
-            </div>
-            <h6 class="fw-bold mb-2">État de la synchronisation :</h6>
-            <div class="bg-light p-3 rounded border font-monospace small mb-3">
-              Service applicatif opérationnel<br>
-              Synchronisation des données active
-            </div>
-          </div>
-          <div class="modal-footer bg-light py-2">
-            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Fermer</button>
-            <button type="button" class="btn btn-sm btn-primary" onclick="BackendApi.loadAllData().then(() => showToast('Données synchronisées avec succès !', 'success'))">Synchroniser maintenant</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-    return modal;
+  updateStatusBadge() {
+    document.getElementById('backendStatusBadge')?.remove();
+    document.getElementById('modalDbStatus')?.remove();
   },
 
   async refreshAll(options = { showIndicator: false, silent: false }) {
-    if (!this.isOnline || !this.isDbConnected) return;
+    if (!this.isOnline || !this.isDbConnected || !sessionStorage.getItem('gestion_token')) return;
 
     const spinIcon = document.getElementById('iconRefreshSpin');
     if (spinIcon) spinIcon.classList.add('spin-animation');
 
     try {
-      const commonLoads = [
+      const loads = [
+        this.loadCatalogReferences(),
         this.loadArticles(),
         this.loadRequests(),
-        this.loadDashboard()
+        this.loadDashboard(),
+        this.loadNotifications()
       ];
-      const administrationLoads = AppState.currentRole === 'admin'
-        ? [this.loadMovements(), this.loadUsers(), this.loadDocuments(), this.loadReferenceData()]
-        : [];
-      await Promise.allSettled([...commonLoads, ...administrationLoads]);
 
-      if (typeof updateCollaboratorLiveTracker === 'function') {
-        updateCollaboratorLiveTracker();
+      if (AppState.canManageOps) {
+        loads.push(this.loadMovements(), this.loadDocuments(), this.loadOperations());
+      }
+      if (AppState.isSuperAdmin) {
+        loads.push(this.loadUsers(), this.loadAdminSettingsAndRefs());
+        if (AppState.currentView === 'settings') {
+          loads.push(this.loadAuditLogs(), this.loadBackups());
+        }
       }
 
-      if (AppState.currentView === 'request-detail' && AppState.selectedRequestRef) {
-        openRequestDetail(AppState.selectedRequestRef);
-      }
-
-      if (typeof applyRoleVisibility === 'function') {
-        applyRoleVisibility(AppState.currentRole);
-      }
+      await Promise.allSettled(loads);
+      updateCollaboratorLiveTracker();
+      applyRoleVisibility(AppState.currentRole);
 
       if (options.showIndicator && !options.silent) {
-        showToast('Données et stocks synchronisés avec succès !', 'success');
+        showToast('Affichage actualisé.', 'success');
       }
     } catch (e) {
-      console.warn('Erreur lors du rafraîchissement global:', e);
+      console.warn('refreshAll error:', e);
     } finally {
-      if (spinIcon) {
-        setTimeout(() => spinIcon.classList.remove('spin-animation'), 650);
-      }
+      if (spinIcon) setTimeout(() => spinIcon.classList.remove('spin-animation'), 600);
     }
   },
 
@@ -1937,17 +4127,390 @@ const BackendApi = {
     return this.refreshAll({ showIndicator: false, silent: true });
   },
 
-  startAutoRefresh(intervalMs = 20000) {
+  startAutoRefresh(intervalMs = 25000) {
     if (this._autoRefreshTimer) clearInterval(this._autoRefreshTimer);
     this._autoRefreshTimer = setInterval(() => {
-      if (!document.hidden && !document.querySelector('.modal.show')) {
+      if (!document.hidden && !document.querySelector('.modal.show') && sessionStorage.getItem('gestion_token')) {
         this.refreshAll({ silent: true, showIndicator: false });
       }
     }, intervalMs);
   },
 
-  
+  async loadCatalogReferences(usePublic = false) {
+    try {
+      const endpoint = usePublic || !sessionStorage.getItem('gestion_token')
+        ? `${this.baseUrl}/public-references`
+        : `${this.baseUrl}/catalog-references`;
+      const res = await fetch(endpoint);
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.success && json.data) {
+        AppState.catalogRefs = json.data;
+        applyCatalogReferencesToSelects(json.data);
+      }
+    } catch (e) {
+      console.warn('loadCatalogReferences error:', e);
+    }
+  },
+
+  async loadOperations() {
+    if (!AppState.canManageOps) return;
+    try {
+      const [overviewRes, assetsRes, vehiclesRes, expensesRes, inventoriesRes, assigneesRes] = await Promise.all([
+        fetch(`${this.baseUrl}/operations/overview`),
+        fetch(`${this.baseUrl}/assets`),
+        fetch(`${this.baseUrl}/vehicles`),
+        fetch(`${this.baseUrl}/expenses`),
+        fetch(`${this.baseUrl}/inventories`),
+        fetch(`${this.baseUrl}/operations/assignees`)
+      ]);
+      if ([overviewRes, assetsRes, vehiclesRes, expensesRes, inventoriesRes, assigneesRes].some(r => !r.ok)) return;
+
+      const [overview, assets, vehicles, expenses, inventories, assignees] = await Promise.all([
+        overviewRes.json(), assetsRes.json(), vehiclesRes.json(), expensesRes.json(), inventoriesRes.json(), assigneesRes.json()
+      ]);
+
+      const data = overview.data || {};
+      const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+
+      const overdueCount = (AppState.currentRequests || []).filter(r => r.is_overdue).length;
+
+      setText('opsAssetsTotal', data.assets?.total ?? 0);
+      setText('opsAssetsAssigned', `${data.assets?.assigned ?? 0} affecté(s)`);
+      setText('opsAssetsIncidents', `${data.assets?.open_incidents ?? 0} incident(s) ouvert(s)`);
+      setText('opsVehiclesTotal', data.vehicles?.total ?? 0);
+      setText('opsVehicleAlerts', `${data.vehicles?.alerts ?? 0} alerte(s) d’échéance / km`);
+      setText('opsVehiclesInService', `${data.vehicles?.in_service ?? 0} en service`);
+      setText('opsDisbursed', formatCurrency(data.expenses?.disbursed));
+      setText('opsUnjustified', `${formatCurrency(data.expenses?.unjustified)} à justifier`);
+      setText('opsExpenseOverruns', `${data.expenses?.reapproval ?? 0} dépassement(s)`);
+      setText('opsInventoryOpen', data.inventory?.open ?? 0);
+      setText('opsInventoryVariance', `${data.inventory?.variances ?? 0} écart(s) d’inventaire`);
+      setText('opsOverdueRequests', `${overdueCount} demande(s) en retard`);
+
+      // Alertes synthèse
+      const alerts = [];
+      if (data.vehicles?.alerts) alerts.push(`${data.vehicles.alerts} véhicule(s) présentent une alerte d’échéance administrative ou de kilométrage d’entretien.`);
+      if (data.expenses?.reapproval) alerts.push(`${data.expenses.reapproval} dépense(s) dépassent le plafond autorisé et nécessitent une revalidation.`);
+      if ((data.expenses?.unjustified || 0) > 0) alerts.push(`${formatCurrency(data.expenses.unjustified)} de décaissements en attente de pièces justificatives.`);
+      if (data.assets?.unavailable) alerts.push(`${data.assets.unavailable} équipement(s) du patrimoine signalé(s) endommagé(s) ou hors service.`);
+      if (overdueCount > 0) alerts.push(`${overdueCount} demande(s) interne(s) ont dépassé la date souhaitée.`);
+
+      const alertBox = document.getElementById('operationsAlerts');
+      if (alertBox) {
+        alertBox.innerHTML = alerts.length
+          ? alerts.map(a => `<div class="alert alert-warning py-2 mb-2"><i class="bi bi-exclamation-triangle me-2"></i>${escHtml(a)}</div>`).join('')
+          : '<div class="alert alert-success mb-0"><i class="bi bi-check-circle me-2"></i>Aucune alerte critique active sur le patrimoine, le parc automobile ou les dépenses.</div>';
+      }
+
+      AppState.currentAssets = assets.data || [];
+      AppState.currentVehicles = vehicles.data || [];
+      AppState.currentExpenses = expenses.data || [];
+      AppState.currentInventories = inventories.data || [];
+      AppState.currentAssignees = assignees.data || [];
+
+      this.renderAssetsTable(AppState.currentAssets);
+      this.renderVehiclesTable(AppState.currentVehicles, vehicles.kpis || data.vehicles || {});
+      this.renderExpensesTable(AppState.currentExpenses, data.expenses || {});
+      this.renderInventoriesTable(AppState.currentInventories);
+
+      populateRelationSelectors(AppState.currentRequests || [], AppState.currentArticles || [], AppState.currentAssignees);
+      await this.loadReport();
+    } catch (error) {
+      console.warn('loadOperations error:', error);
+    }
+  },
+
+  renderAssetsTable(assets) {
+    const tbody = document.getElementById('assetsTableBody');
+    if (!tbody) return;
+    if (!assets.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Aucun bien durable enregistré au patrimoine.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = assets.map(asset => {
+      const condClass = ['Endommagé', 'Hors service'].includes(asset.condition) ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success';
+      const availClass = asset.availability === 'Affecté' ? 'bg-primary-subtle text-primary' : 'bg-light text-dark';
+      return `
+        <tr data-condition="${escHtml(asset.condition)}" data-availability="${escHtml(asset.availability)}">
+          <td class="fw-bold text-primary font-monospace">${escHtml(asset.inventory_number)}</td>
+          <td><strong>${escHtml(asset.name)}</strong>${asset.serial_number ? `<small class="d-block text-muted">S/N: ${escHtml(asset.serial_number)}</small>` : ''}</td>
+          <td>${escHtml(asset.category)}</td>
+          <td class="small">${formatDateShort(asset.acquired_at)}<div class="text-muted">${asset.acquisition_cost ? formatCurrency(asset.acquisition_cost) : '—'}</div></td>
+          <td><span class="badge ${condClass} border">${escHtml(asset.condition)}</span></td>
+          <td><span class="badge ${availClass} border">${escHtml(asset.availability)}</span></td>
+          <td class="small">
+            <strong>${escHtml(asset.assigned_user?.name || 'Non affecté')}</strong>
+            <div class="text-muted">${escHtml([asset.department, asset.location].filter(Boolean).join(' • ') || '—')}</div>
+          </td>
+          <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Remettre / Affecter" onclick="openAssetModal(${asset.id}, 'assign')"><i class="bi bi-person-plus"></i></button>
+            ${asset.availability === 'Affecté' ? `<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Restituer" onclick="openAssetModal(${asset.id}, 'return')"><i class="bi bi-box-arrow-in-left"></i></button>` : ''}
+            <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" title="Signaler un incident" onclick="openAssetModal(${asset.id}, 'incident')"><i class="bi bi-exclamation-triangle"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2" title="Maintenance" onclick="openAssetModal(${asset.id}, 'maintenance')"><i class="bi bi-tools"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-dark py-0 px-2" title="Modifier" onclick="openAssetModal(${asset.id}, 'edit')"><i class="bi bi-pencil"></i></button>
+            <button type="button" class="btn btn-sm btn-light border py-0 px-2" title="Historique complet" onclick="openAssetModal(${asset.id}, 'history')"><i class="bi bi-clock-history"></i></button>
+          </td>
+        </tr>`;
+    }).join('');
+  },
+
+  renderVehiclesTable(vehicles, kpis = {}) {
+    const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setTxt('fleetKpiTotal', kpis.total ?? vehicles.length);
+    setTxt('fleetKpiAvailable', kpis.available ?? 0);
+    setTxt('fleetKpiInService', kpis.in_service ?? 0);
+    setTxt('fleetKpiMaintenance', kpis.maintenance ?? kpis.unavailable ?? 0);
+    setTxt('fleetKpiAlerts', kpis.alerts ?? 0);
+    setTxt('fleetKpiCost', formatCurrency(kpis.total_cost ?? kpis.maintenance_cost ?? 0));
+
+    const tbody = document.getElementById('vehiclesTableBody');
+    if (!tbody) return;
+    if (!vehicles.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucun véhicule enregistré au parc automobile.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = vehicles.map(v => {
+      const statusBadge = v.status === 'Disponible'
+        ? 'bg-success-subtle text-success'
+        : (v.status === 'En service' ? 'bg-primary-subtle text-primary' : 'bg-warning-subtle text-warning-emphasis');
+      const alertsList = v.alerts_summary || [];
+      return `
+        <tr>
+          <td class="fw-bold font-monospace">${escHtml(v.registration_number)}</td>
+          <td><strong>${escHtml(v.brand)} ${escHtml(v.model)}</strong><small class="d-block text-muted">${escHtml(v.type || 'Véhicule')}</small></td>
+          <td class="fw-semibold">${Number(v.mileage || 0).toLocaleString('fr-FR')} km</td>
+          <td><span class="badge ${statusBadge} border">${escHtml(v.status)}</span></td>
+          <td class="small"><strong>${escHtml(v.driver?.name || 'Sans conducteur')}</strong><div class="text-muted">${escHtml(v.department || 'Parc central')}</div></td>
+          <td class="small">
+            ${alertsList.length
+              ? alertsList.map(al => `<span class="badge bg-danger-subtle text-danger border d-inline-block me-1 mb-1">${escHtml(al)}</span>`).join('')
+              : `<span class="text-success"><i class="bi bi-check-circle me-1"></i>À jour</span>`}
+            ${v.next_maintenance_at ? `<div class="text-muted">Entretien : ${formatDateShort(v.next_maintenance_at)}${v.next_maintenance_mileage ? ` / ${Number(v.next_maintenance_mileage).toLocaleString('fr-FR')} km` : ''}</div>` : ''}
+          </td>
+          <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Modifier / Kilométrage" onclick="openVehicleModal(${v.id}, 'edit')"><i class="bi bi-speedometer2"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Documents & Échéances" onclick="openVehicleModal(${v.id}, 'documents')"><i class="bi bi-file-earmark-check"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2" title="Entretien / Réparation" onclick="openVehicleModal(${v.id}, 'maintenance')"><i class="bi bi-wrench"></i></button>
+            <button type="button" class="btn btn-sm btn-light border py-0 px-2" title="Historique & Coûts" onclick="openVehicleModal(${v.id}, 'history')"><i class="bi bi-clock-history"></i></button>
+          </td>
+        </tr>`;
+    }).join('');
+  },
+
+  renderExpensesTable(expenses, kpis = {}) {
+    const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = formatCurrency(v); };
+    setTxt('expKpiEstimated', kpis.estimated ?? 0);
+    setTxt('expKpiAuthorized', kpis.authorized ?? 0);
+    setTxt('expKpiCommitted', kpis.committed ?? 0);
+    setTxt('expKpiDisbursed', kpis.disbursed ?? 0);
+    setTxt('expKpiJustified', kpis.justified ?? 0);
+    setTxt('expKpiUnjustified', kpis.unjustified ?? 0);
+
+    const tbody = document.getElementById('expensesTableBody');
+    if (!tbody) return;
+    if (!expenses.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Aucune dépense enregistrée.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = expenses.map(exp => {
+      const toJustify = Number(exp.amount_to_justify || 0);
+      const isOverrun = Boolean(exp.requires_reapproval) || exp.status === 'Nouvelle validation requise';
+      return `
+        <tr data-status="${escHtml(exp.status)}" data-unjustified="${toJustify > 0 ? '1' : '0'}" data-overrun="${isOverrun ? '1' : '0'}">
+          <td class="fw-bold text-primary font-monospace">${escHtml(exp.reference)}</td>
+          <td class="small">
+            ${exp.material_request?.reference
+              ? `<a href="#request-detail/${encodeURIComponent(exp.material_request.reference)}" class="fw-semibold text-decoration-none">${escHtml(exp.material_request.reference)}</a>`
+              : `<span class="badge bg-light text-dark border">${escHtml(exp.authorization_reference || 'Autorisation')}</span>`}
+            <div class="text-muted">${escHtml(exp.payment_method || '')}</div>
+          </td>
+          <td class="small"><strong>${escHtml(exp.supplier?.name || exp.beneficiary || '—')}</strong>${exp.supplier && exp.beneficiary ? `<div class="text-muted">${escHtml(exp.beneficiary)}</div>` : ''}</td>
+          <td class="fw-semibold">${formatCurrency(exp.authorized_amount)}</td>
+          <td class="small">Eng: ${formatCurrency(exp.committed_amount)}<div class="fw-semibold text-dark">Déc: ${formatCurrency(exp.disbursed_amount)}</div></td>
+          <td class="small">Just: ${formatCurrency(exp.justified_amount)}<div class="${toJustify > 0 ? 'text-danger fw-semibold' : 'text-success'}">Reste: ${formatCurrency(toJustify)}</div></td>
+          <td class="fw-semibold">${formatCurrency(exp.remaining_amount)}</td>
+          <td><span class="badge ${isOverrun ? 'bg-danger' : (exp.status === 'Validé' ? 'bg-success-subtle text-success border' : 'bg-warning-subtle text-warning-emphasis border')}">${escHtml(exp.status)}</span></td>
+          <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Suivi montants / Décaisser" onclick="openExpenseModal(${exp.id}, 'edit')"><i class="bi bi-pencil-square"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" title="Contrôler & Valider" onclick="openExpenseModal(${exp.id}, 'validate')"><i class="bi bi-check2-circle"></i></button>
+            <button type="button" class="btn btn-sm btn-light border py-0 px-2" title="Justificatifs & Historique (${exp.attachments?.length || 0})" onclick="openExpenseModal(${exp.id}, 'detail')"><i class="bi bi-paperclip"></i> ${exp.attachments?.length || 0}</button>
+          </td>
+        </tr>`;
+    }).join('');
+  },
+
+  renderInventoriesTable(inventories) {
+    const tbody = document.getElementById('inventoriesTableBody');
+    if (!tbody) return;
+    if (!inventories.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucun inventaire physique enregistré.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = inventories.map(inv => {
+      const variances = (inv.items || []).filter(item => Number(item.variance) !== 0).length;
+      const isPending = inv.status === 'En attente de validation';
+      return `
+        <tr>
+          <td class="fw-bold text-primary font-monospace">${escHtml(inv.reference)}</td>
+          <td>${formatDateShort(inv.inventory_date)}</td>
+          <td><span class="badge bg-light text-dark border">${escHtml(inv.scope)}</span></td>
+          <td>${inv.items?.length || 0} article(s)</td>
+          <td><span class="badge ${variances > 0 ? 'bg-warning-subtle text-warning-emphasis border' : 'bg-success-subtle text-success border'}">${variances} écart(s)</span></td>
+          <td><span class="badge ${isPending ? 'bg-warning text-dark' : 'bg-success'}">${escHtml(inv.status)}</span></td>
+          <td class="text-end text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" onclick="openInventoryDetailModal(${inv.id})">Détails</button>
+            ${isPending ? `<button type="button" class="btn btn-sm btn-success py-0 px-2" onclick="validateInventory(${inv.id})">Valider</button>` : ''}
+          </td>
+        </tr>`;
+    }).join('');
+  },
+
+  async loadReport(query = '') {
+    try {
+      const response = await fetch(`${this.baseUrl}/reports${query ? `?${query}` : ''}`);
+      if (!response.ok) return;
+      const report = await response.json();
+      AppState.lastReportPayload = report;
+      AppState.currentSavedReports = report.saved_reports || [];
+
+      const data = report.data || {};
+      const cmp = data.comparison || {};
+      const deltaBadge = (delta, inverse = false) => {
+        const d = Number(delta || 0);
+        if (d === 0) return '<span class="text-muted small">= vs période préc.</span>';
+        const positiveGood = inverse ? d < 0 : d > 0;
+        return `<span class="small ${positiveGood ? 'text-success' : 'text-warning'}">${d > 0 ? `+${d}` : d} vs période préc.</span>`;
+      };
+
+      const summary = document.getElementById('reportSummary');
+      if (summary) {
+        summary.innerHTML = `
+          <div class="col-md-3">
+            <div class="gp-card h-100 mb-0">
+              <div class="text-muted small">Demandes de la période</div>
+              <div class="fs-3 fw-bold">${data.totals?.requests ?? 0}</div>
+              <div>${deltaBadge(cmp.requests?.delta)} • Délai moy: <strong>${data.average_processing_hours || 0} h</strong></div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="gp-card h-100 mb-0">
+              <div class="text-muted small">Dépenses décaissées</div>
+              <div class="fs-5 fw-bold">${formatCurrency(data.expenses?.disbursed)}</div>
+              <div class="small text-danger">À justifier : ${formatCurrency(data.expenses?.unjustified)}</div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="gp-card h-100 mb-0">
+              <div class="text-muted small">Valorisation des stocks</div>
+              <div class="fs-5 fw-bold">${formatCurrency(data.stock?.value)}</div>
+              <div class="small text-muted">${data.stock?.low || 0} alerte(s) • ${data.stock?.movements || 0} mvt(s)</div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="gp-card h-100 mb-0">
+              <div class="text-muted small">Patrimoine & Parc auto</div>
+              <div class="fs-5 fw-bold">${data.assets?.total || 0} biens • ${data.vehicles?.total || 0} véh.</div>
+              <div class="small text-muted">${data.assets?.damaged || 0} endommagé(s) • ${data.vehicles?.alerts || 0} alerte(s) auto</div>
+            </div>
+          </div>`;
+      }
+
+      const savedTbody = document.getElementById('savedReportsTableBody');
+      if (savedTbody) {
+        const list = AppState.currentSavedReports;
+        savedTbody.innerHTML = list.length
+          ? list.map(sr => `
+            <tr>
+              <td class="fw-bold text-primary font-monospace">${escHtml(sr.reference)}</td>
+              <td><span class="badge bg-light text-dark border">${escHtml(sr.type)}</span></td>
+              <td class="fw-semibold">${escHtml(sr.title)}</td>
+              <td class="small">${formatDateShort(sr.period_from)} → ${formatDateShort(sr.period_to)}</td>
+              <td class="small">${escHtml(sr.generator?.name || 'Direction')}</td>
+              <td class="small text-muted">${formatDateTime(sr.created_at)}</td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openSavedReportPreview(${sr.id})"><i class="bi bi-printer"></i> Aperçu PDF</button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="7" class="text-center text-muted py-3">Aucun rapport archivé pour le moment.</td></tr>';
+      }
+    } catch (e) {
+      console.warn('loadReport error:', e);
+    }
+  },
+
+  async loadNotifications() {
+    try {
+      const response = await fetch(`${this.baseUrl}/notifications`);
+      if (!response.ok) return;
+      const result = await response.json();
+      const notifications = result.data || [];
+      const unreadCount = Number(result.unread_count ?? notifications.filter(n => !n.read_at).length);
+
+      const countEl = document.getElementById('notifCountBadge');
+      const dotEl = document.getElementById('topbarNotifDot');
+      if (countEl) countEl.textContent = unreadCount;
+      if (dotEl) dotEl.style.display = unreadCount > 0 ? 'block' : 'none';
+
+      const dropdown = document.getElementById('notificationsDropdown');
+      if (!dropdown) return;
+      dropdown.querySelectorAll('.notification-item, .notification-empty-state').forEach(item => item.remove());
+      if (!notifications.length) {
+        dropdown.insertAdjacentHTML('beforeend', '<li class="p-3 text-center text-muted small notification-empty-state"><i class="bi bi-bell-slash me-1"></i> Aucune notification</li>');
+        return;
+      }
+      notifications.slice(0, 12).forEach(notification => {
+        const item = document.createElement('li');
+        item.className = `notification-item p-2 border-bottom small ${notification.read_at ? 'text-muted' : 'bg-primary-subtle'}`;
+        item.innerHTML = `
+          <button type="button" class="btn text-start p-0 w-100">
+            <strong class="d-block text-dark">${escHtml(notification.title)}</strong>
+            <span>${escHtml(notification.message)}</span>
+            <small class="d-block mt-1 text-muted">${formatDateTime(notification.created_at)}</small>
+          </button>`;
+        item.querySelector('button').addEventListener('click', async () => {
+          if (!notification.read_at) {
+            await fetch(`${this.baseUrl}/notifications/${notification.id}/read`, { method: 'PUT' });
+          }
+          await this.loadNotifications();
+          if (notification.link && notification.link.startsWith('#')) {
+            window.location.hash = notification.link.slice(1);
+          }
+        });
+        dropdown.appendChild(item);
+      });
+    } catch (e) {
+      console.warn('loadNotifications error:', e);
+    }
+  },
+
+  async loadMyLoginHistory() {
+    try {
+      const res = await fetch(`${this.baseUrl}/auth/login-history`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const tbody = document.getElementById('myLoginHistoryTableBody');
+      if (!tbody) return;
+      const logs = json.data || [];
+      tbody.innerHTML = logs.length
+        ? logs.map(l => `<tr>
+            <td class="small text-nowrap">${formatDateTime(l.created_at)}</td>
+            <td><span class="badge ${l.action === 'auth.login' ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${l.action === 'auth.login' ? 'Connexion' : 'Déconnexion'}</span></td>
+            <td class="font-monospace small">${escHtml(l.ip_address || '127.0.0.1')}</td>
+            <td class="small text-muted">${escHtml(l.description || '')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="4" class="text-center text-muted py-3">Aucune connexion récente.</td></tr>';
+    } catch (e) {
+      console.warn('loadMyLoginHistory error:', e);
+    }
+  },
+
   async loadUsers() {
+    if (!AppState.isSuperAdmin) return;
     try {
       const res = await fetch(`${this.baseUrl}/users`);
       if (!res.ok) return;
@@ -1955,104 +4518,258 @@ const BackendApi = {
       if (!json.success || !json.data) return;
 
       const users = json.data;
+      AppState.currentUsers = users;
+
+      // Alimenter les listes de délégation dans Paramètres
+      const del1 = document.getElementById('delegationDelegatorSelect');
+      const del2 = document.getElementById('delegationDelegateSelect');
+      if (del1 && del2) {
+        const managers = users.filter(u => u.is_active && ['admin', 'manager'].includes(u.role));
+        const activeUsers = users.filter(u => u.is_active);
+        del1.innerHTML = managers.map(u => `<option value="${u.id}">${escHtml(u.name)} (${escHtml(u.service || u.role)})</option>`).join('');
+        del2.innerHTML = activeUsers.map(u => `<option value="${u.id}">${escHtml(u.name)} (${escHtml(u.service || u.role)})</option>`).join('');
+      }
+
       const tbody = document.getElementById('usersTableBody');
-      if (tbody) {
-        tbody.innerHTML = '';
-        if (users.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-people me-2"></i>Aucun utilisateur enregistré. Cliquez sur "+ Nouvel utilisateur" pour créer un compte.</td></tr>';
-          return;
-        }
+      if (!tbody) return;
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">Aucun utilisateur enregistré.</td></tr>';
+        return;
+      }
 
-        users.forEach(u => {
-          const initials = (u.name || 'U').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-          const roleLabel = u.role === 'admin' ? 'Administrateur' : 'Collaborateur';
-          const roleBadgeClass = u.role === 'admin' ? 'bg-primary-subtle text-primary border' : 'bg-light text-dark border';
+      tbody.innerHTML = users.map(u => {
+        const initials = (u.name || 'U').split(' ').filter(Boolean).map(n => n[0]).join('').substring(0, 2).toUpperCase();
+        const roleLabel = u.role === 'admin' ? 'Administrateur' : (u.role === 'manager' ? 'Responsable' : 'Collaborateur');
+        const roleBadgeClass = u.role === 'admin' ? 'bg-primary-subtle text-primary border' : (u.role === 'manager' ? 'bg-warning-subtle text-warning-emphasis border' : 'bg-light text-dark border');
+        const isCurrentSessionUser = AppState.currentUser && Number(AppState.currentUser.id) === Number(u.id);
+        const permCount = (u.effective_permissions || []).length;
 
-          const isCurrentSessionUser = AppState.currentUser && (
-            AppState.currentUser.id === u.id || 
-            AppState.currentUser.email === u.email
-          );
-
-          const actionHtml = isCurrentSessionUser
-            ? '<span class="badge bg-primary-subtle text-primary border py-1 px-2" title="Votre compte connecté"><i class="bi bi-person-check me-1"></i>Connecté (Vous)</span>'
-            : `<button class="btn-gp-icon" title="Supprimer l'utilisateur" onclick="BackendApi.deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}', '${u.role}')"><i class="bi bi-trash text-danger"></i></button>`;
-
-          const tr = document.createElement('tr');
-          tr.setAttribute('data-role', roleLabel);
-          tr.innerHTML = `
+        return `
+          <tr data-role="${roleLabel}" data-active="${u.is_active ? 'active' : 'inactive'}">
             <td>
               <div class="d-flex align-items-center gap-2">
-                <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center fw-bold" style="width:34px; height:34px; font-size:0.8rem;">
-                  ${initials}
-                </div>
+                <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center fw-bold" style="width:34px; height:34px; font-size:0.8rem;">${escHtml(initials)}</div>
                 <div>
-                  <span class="fw-semibold text-dark">${u.name}</span>
+                  <span class="fw-semibold text-dark">${escHtml(u.name)}</span>
                   ${isCurrentSessionUser ? ' <span class="badge bg-secondary-subtle text-secondary" style="font-size:0.68rem;">(Vous)</span>' : ''}
+                  <small class="d-block font-monospace text-muted">${escHtml(u.matricule || '')}</small>
                 </div>
               </div>
             </td>
-            <td class="text-muted">${u.email}</td>
-            <td><span class="badge ${roleBadgeClass}">${roleLabel}</span></td>
-            <td>${u.service || '-'}</td>
-            <td><span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> Actif</span></td>
-            <td class="text-end">
-              ${actionHtml}
+            <td class="small">
+              <div>${escHtml(u.email)}</div>
+              <small class="text-muted">${escHtml([u.phone, u.office_location].filter(Boolean).join(' • ') || '—')}</small>
             </td>
-          `;
-          tbody.appendChild(tr);
-        });
-      }
+            <td>
+              <span class="badge ${roleBadgeClass}">${roleLabel}</span>
+              <small class="d-block text-muted mt-1">${permCount} permission(s)${u.has_active_delegation ? ' • <span class="text-primary fw-semibold">Délégué</span>' : ''}</small>
+            </td>
+            <td>${escHtml(u.service || '-')}</td>
+            <td><span class="badge-status ${u.is_active ? 'badge-in-stock' : 'badge-rejected'}"><span class="badge-status-dot"></span> ${u.is_active ? 'Actif' : 'Désactivé'}</span></td>
+            <td class="small text-muted">${formatDateTime(u.last_login_at, 'Jamais')}</td>
+            <td class="text-end text-nowrap">
+              <button type="button" class="btn-gp-icon" title="Modifier l’utilisateur & ses permissions" onclick="openEditUserModal(${u.id})"><i class="bi bi-pencil-square"></i></button>
+              <button type="button" class="btn-gp-icon" title="Réinitialiser le mot de passe" onclick="openResetUserPasswordModal(${u.id}, '${escHtml(u.name)}')"><i class="bi bi-key"></i></button>
+              ${!isCurrentSessionUser ? `
+                <button type="button" class="btn-gp-icon" title="${u.is_active ? 'Désactiver immédiatement' : 'Réactiver'} le compte" onclick="BackendApi.toggleUserActive(${u.id}, ${!u.is_active})">
+                  <i class="bi ${u.is_active ? 'bi-person-slash text-warning' : 'bi-person-check text-success'}"></i>
+                </button>
+                <button type="button" class="btn-gp-icon text-danger" title="Supprimer" onclick="BackendApi.deleteUser(${u.id}, '${escHtml(u.name)}')"><i class="bi bi-trash"></i></button>
+              ` : ''}
+            </td>
+          </tr>`;
+      }).join('');
     } catch (e) {
       console.warn('loadUsers error:', e);
     }
   },
 
-  async loadReferenceData() {
+  async loadAdminSettingsAndRefs() {
+    if (!AppState.isSuperAdmin) return;
     try {
-      const res = await fetch(`${this.baseUrl}/reference-data`);
+      const res = await fetch(`${this.baseUrl}/operations/reference-data`);
       if (!res.ok) return;
       const json = await res.json();
-      const categorySelect = document.getElementById('artCategory');
-      const unitSelect = document.getElementById('artUnit');
-      if (categorySelect && json.categories?.length) {
-        categorySelect.innerHTML = json.categories.map(category => `<option value="${category.name}">${category.name}</option>`).join('');
-      }
-      if (unitSelect && json.units?.length) {
-        unitSelect.innerHTML = json.units.map(unit => `<option value="${unit.name}">${unit.name}${unit.symbol ? ` (${unit.symbol})` : ''}</option>`).join('');
+      const d = json.data || {};
+
+      // Remplir les champs de paramètres généraux
+      const settingsMap = {};
+      (d.settings || []).forEach(s => { settingsMap[s.key] = s.value; });
+      const setVal = (id, key) => { const el = document.getElementById(id); if (el && settingsMap[key] !== undefined) el.value = settingsMap[key]; };
+      const setCheck = (id, key) => { const el = document.getElementById(id); if (el && settingsMap[key] !== undefined) el.checked = settingsMap[key] === '1' || settingsMap[key] === 'true'; };
+
+      setVal('settingOrgName', 'company_name');
+      setVal('settingOrgAcronym', 'company_short_code');
+      setVal('settingCurrency', 'currency');
+      setVal('settingTimezone', 'timezone');
+      setVal('settingOrgAddress', 'company_address');
+      setVal('settingOrgContact', 'company_phone');
+      setVal('settingDefaultStockThreshold', 'default_min_threshold');
+      setVal('settingDefaultMaxThreshold', 'default_max_threshold');
+      setVal('settingInventoryFrequency', 'inventory_frequency');
+      setCheck('switchAlertEmail', 'notify_on_low_stock');
+      setCheck('switchBlockZeroStock', 'block_zero_stock');
+      setVal('settingValidationLevels', 'validation_levels');
+      setVal('settingRequestSlaHours', 'sla_processing_hours');
+      setCheck('switchNotifyOnSubmit', 'notify_on_request_submitted');
+      setCheck('switchNotifyRequester', 'notify_on_request_decision');
+      setCheck('switchNotifyMaintenance', 'notify_on_vehicle_alert');
+      setCheck('switchNotifyExpenseOverrun', 'notify_on_expense_overrun');
+      setVal('settingSessionTimeout', 'session_timeout_minutes');
+      setVal('settingPasswordExpiry', 'password_expiry_days');
+
+      const renderRefList = (containerId, rows, updateBaseEndpoint, subBuilder = null) => {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = (rows || []).map(row => `
+          <div class="d-flex justify-content-between align-items-center p-2 bg-light border rounded small">
+            <div>
+              <strong class="${row.is_active ? 'text-dark' : 'text-decoration-line-through text-muted'}">${escHtml(row.name)}</strong>
+              ${subBuilder ? `<small class="text-muted ms-2">${escHtml(subBuilder(row))}</small>` : ''}
+            </div>
+            <button type="button" class="btn btn-sm ${row.is_active ? 'btn-outline-secondary' : 'btn-outline-success'} py-0 px-2" onclick="toggleReferenceItemActive('${updateBaseEndpoint}/${row.id}', ${Boolean(row.is_active)})">
+              ${row.is_active ? 'Désactiver' : 'Activer'}
+            </button>
+          </div>
+        `).join('') || '<div class="text-muted small py-2">Aucun élément.</div>';
+      };
+
+      renderRefList('refListDepartments', d.departments, '/api/operations/reference-data/departments');
+      renderRefList('refListRequestCategories', d.request_categories, '/api/operations/reference-data/request-categories');
+      renderRefList('refListStockCategories', d.article_categories, '/api/categories');
+      renderRefList('refListUnits', d.units, '/api/units', u => u.symbol || '');
+      renderRefList('refListLocations', d.locations, '/api/operations/reference-data/locations');
+      renderRefList('refListSuppliers', d.suppliers, '/api/operations/reference-data/suppliers', s => s.phone || '');
+
+      const delBody = document.getElementById('delegationsTableBody');
+      if (delBody) {
+        const dels = d.delegations || [];
+        delBody.innerHTML = dels.length
+          ? dels.map(dl => `
+            <tr>
+              <td class="fw-semibold">${escHtml(dl.delegator?.name || '—')}</td>
+              <td class="fw-semibold text-primary">${escHtml(dl.delegate?.name || '—')}</td>
+              <td class="small">${formatDateShort(dl.starts_at)} → ${formatDateShort(dl.ends_at, 'Illimitée')}</td>
+              <td class="small">${escHtml(dl.notes || dl.scope)}</td>
+              <td><span class="badge ${dl.is_active ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${dl.is_active ? 'Active' : 'Révoquée'}</span></td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="toggleReferenceItemActive('/api/operations/reference-data/delegations/${dl.id}', ${Boolean(dl.is_active)})">
+                  ${dl.is_active ? 'Révoquer' : 'Réactiver'}
+                </button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="6" class="text-center text-muted py-3">Aucune délégation enregistrée.</td></tr>';
       }
     } catch (e) {
-      console.warn('loadReferenceData error:', e);
+      console.warn('loadAdminSettingsAndRefs error:', e);
     }
   },
 
-  async deleteUser(userId, userName, userRole = '') {
-    if (AppState.currentUser && (AppState.currentUser.id == userId || AppState.currentUser.email === userName)) {
-      showToast('Action impossible : vous ne pouvez pas supprimer votre propre compte connecté !', 'warning');
+  async loadAuditLogs() {
+    if (!AppState.isSuperAdmin) return;
+    try {
+      const params = new URLSearchParams();
+      const mod = document.getElementById('filterAuditModule')?.value || '';
+      const from = document.getElementById('filterAuditFrom')?.value || '';
+      const to = document.getElementById('filterAuditTo')?.value || '';
+      const search = document.getElementById('filterAuditSearch')?.value.trim() || '';
+      if (mod) params.set('module', mod);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (search) params.set('search', search);
+
+      const res = await fetch(`${this.baseUrl}/activity-logs?${params.toString()}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const tbody = document.getElementById('activityLogsTableBody');
+      if (!tbody) return;
+      const logs = json.data || [];
+      const formatAuditObject = (obj) => {
+        if (!obj || typeof obj !== 'object') return '';
+        return Object.entries(obj)
+          .filter(([, val]) => val !== null && val !== undefined && val !== '')
+          .map(([key, val]) => `<span class="me-2"><strong>${escHtml(key.replace(/_/g, ' '))} :</strong> ${escHtml(typeof val === 'object' ? Object.values(val).join(', ') : String(val))}</span>`)
+          .join('');
+      };
+      const formatAuditAction = (action) => {
+        const raw = String(action || '');
+        return raw.replace(/[._]/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+      };
+      tbody.innerHTML = logs.length
+        ? logs.map(l => {
+          const beforeHtml = formatAuditObject(l.properties?.before);
+          const afterHtml = formatAuditObject(l.properties?.after);
+          const props = (beforeHtml || afterHtml)
+            ? `<details class="mt-1"><summary class="text-primary small" style="cursor:pointer;">Voir le détail des modifications</summary><div class="bg-light border rounded p-2 mt-1 small">${beforeHtml ? `<div class="text-muted mb-1"><em>Avant :</em> ${beforeHtml}</div>` : ''}${afterHtml ? `<div><em>Après :</em> ${afterHtml}</div>` : ''}</div></details>`
+            : '';
+          return `
+            <tr>
+              <td class="small text-nowrap">${formatDateTime(l.created_at)}</td>
+              <td class="small"><strong>${escHtml(l.user?.name || 'Système')}</strong><div class="text-muted small">${escHtml(l.ip_address || '')}</div></td>
+              <td><span class="badge bg-light text-dark border">${escHtml(formatAuditAction(l.action))}</span></td>
+              <td class="small">${escHtml(l.description || '')}${props}</td>
+            </tr>`;
+        }).join('')
+        : '<tr><td colspan="4" class="text-center text-muted py-4">Aucune entrée d’audit pour ces critères.</td></tr>';
+    } catch (e) {
+      console.warn('loadAuditLogs error:', e);
+    }
+  },
+
+  async loadBackups() {
+    if (!AppState.isSuperAdmin) return;
+    try {
+      const res = await fetch(`${this.baseUrl}/backups`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const tbody = document.getElementById('backupsTableBody');
+      if (!tbody) return;
+      const list = json.data || [];
+      tbody.innerHTML = list.length
+        ? list.map(b => `
+          <tr>
+            <td class="fw-bold text-primary">${escHtml(b.reference)}</td>
+            <td class="small">${escHtml(b.filename)}</td>
+            <td class="small">${Math.max(1, Math.round(Number(b.size_bytes || 0) / 1024))} Ko</td>
+            <td class="small">${b.records_count} élément(s)</td>
+            <td class="small">${escHtml(b.creator?.name || 'Admin')}</td>
+            <td class="small text-nowrap">${formatDateTime(b.created_at)}</td>
+            <td class="text-end text-nowrap">
+              <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 me-1" onclick="downloadAuthenticatedFile('/api/backups/${b.id}/download', '${escHtml(b.filename)}')"><i class="bi bi-download"></i></button>
+              <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" onclick="restoreExistingBackup(${b.id}, '${escHtml(b.reference)}')"><i class="bi bi-arrow-counterclockwise"></i> Restaurer</button>
+            </td>
+          </tr>`).join('')
+        : '<tr><td colspan="7" class="text-center text-muted py-3">Aucune sauvegarde générée pour le moment.</td></tr>';
+    } catch (e) {
+      console.warn('loadBackups error:', e);
+    }
+  },
+
+  async deleteUser(userId, userName) {
+    if (AppState.currentUser && Number(AppState.currentUser.id) === Number(userId)) {
+      showToast('Vous ne pouvez pas supprimer votre propre compte connecté.', 'warning');
       return;
     }
-
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer le compte de ${userName} ?`)) return;
-
+    if (!confirm(`Confirmez-vous la suppression du compte "${userName}" ?`)) return;
     try {
-      const currentUserId = AppState.currentUser?.id || '';
-      const res = await fetch(`${this.baseUrl}/users/${userId}?current_user_id=${currentUserId}`, { 
-        method: 'DELETE',
-        headers: {
-          'Accept': 'application/json',
-          'X-User-Id': currentUserId
-        }
-      });
+      const res = await fetch(`${this.baseUrl}/users/${userId}`, { method: 'DELETE' });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || 'Utilisateur supprimé.', 'success');
-        await this.loadUsers();
-      } else {
-        showToast(json.message || 'Impossible de supprimer cet utilisateur.', 'error');
-      }
+      showToast(json.message || 'Utilisateur supprimé.', res.ok && json.success ? 'success' : 'danger');
+      if (res.ok && json.success) await this.loadUsers();
     } catch (e) {
-      console.warn('deleteUser error:', e);
-      showToast('Erreur de communication avec le serveur.', 'error');
+      showToast('Impossible de supprimer ce compte pour le moment.', 'danger');
     }
+  },
+
+  async toggleUserActive(userId, isActive) {
+    const response = await fetch(`${this.baseUrl}/users/${userId}/active`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: isActive })
+    });
+    const data = await response.json();
+    showToast(data.message || 'Compte mis à jour.', response.ok ? 'success' : 'danger');
+    if (response.ok) await this.loadUsers();
   },
 
   async loadArticles() {
@@ -2063,128 +4780,95 @@ const BackendApi = {
       if (!json.success || !json.data) return;
 
       const articles = json.data;
+      AppState.currentArticles = articles;
+      populateRelationSelectors(AppState.currentRequests || [], articles, AppState.currentAssignees || []);
+
       const tbody = document.getElementById('articlesStockTableBody');
       if (tbody) {
-        tbody.innerHTML = '';
-        if (articles.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted"><i class="bi bi-box me-2"></i>Aucun article en stock. Cliquez sur "+ Nouvel article" pour enregistrer un matériel.</td></tr>';
+        if (!articles.length) {
+          tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-muted"><i class="bi bi-box me-2"></i>Aucun article en stock.</td></tr>';
         } else {
-          articles.forEach(art => {
-          let statusKey = 'dispo';
-          let badgeHtml = '<span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> En stock</span>';
-          let qtyClass = '';
+          tbody.innerHTML = articles.map(art => {
+            let statusKey = 'dispo';
+            let badgeHtml = '<span class="badge-status badge-in-stock"><span class="badge-status-dot"></span> En stock</span>';
+            let qtyClass = '';
 
-          if (art.quantity === 0) {
-            statusKey = 'rupture';
-            badgeHtml = '<span class="badge-status badge-rejected"><span class="badge-status-dot"></span> Rupture</span>';
-            qtyClass = 'text-danger';
-          } else if (art.quantity <= art.threshold) {
-            statusKey = 'faible';
-            badgeHtml = '<span class="badge-status badge-low-stock"><span class="badge-status-dot"></span> Stock faible</span>';
-            qtyClass = 'text-warning';
-          }
+            if (art.quantity === 0) {
+              statusKey = 'rupture';
+              badgeHtml = '<span class="badge-status badge-rejected"><span class="badge-status-dot"></span> Rupture</span>';
+              qtyClass = 'text-danger';
+            } else if (art.quantity <= art.threshold) {
+              statusKey = 'faible';
+              badgeHtml = '<span class="badge-status badge-low-stock"><span class="badge-status-dot"></span> Stock faible</span>';
+              qtyClass = 'text-warning';
+            }
 
-          let icon = 'bi-box-seam';
-          if (art.category === 'Informatique') icon = 'bi-laptop';
-          else if (art.category === 'Papeterie') icon = 'bi-journal-text';
-          else if (art.category === 'Gadgets') icon = 'bi-tag';
-
-          const tr = document.createElement('tr');
-          tr.setAttribute('data-cat', art.category);
-          tr.setAttribute('data-status', statusKey);
-          tr.innerHTML = `
-            <td class="text-muted fw-medium">${art.code}</td>
-            <td>
-              <div class="d-flex align-items-center gap-2">
-                <div class="p-1 rounded bg-light text-primary"><i class="bi ${icon}"></i></div>
-                <span class="fw-semibold text-dark">${art.name}</span>
-              </div>
-            </td>
-            <td>${art.category}</td>
-            <td>${art.unit}</td>
-            <td class="fw-bold ${qtyClass}">${art.quantity}</td>
-            <td class="text-muted">${art.threshold}</td>
-            <td>${badgeHtml}</td>
-            <td class="text-end">
-              <button class="btn-gp-icon admin-only-feature" title="Modifier l'article"><i class="bi bi-three-dots"></i></button>
-              <button class="btn btn-sm btn-outline-primary collaborator-only-feature py-0 px-2" onclick="showToast('${art.name} sélectionné pour votre demande !', 'info'); navigateToView('request-new');"><i class="bi bi-plus-lg me-1"></i> Demander</button>
-            </td>
-          `;
-          tbody.appendChild(tr);
-        });
+            return `
+              <tr data-cat="${escHtml(art.category)}" data-status="${statusKey}">
+                <td class="text-muted fw-semibold font-monospace">${escHtml(art.code)}</td>
+                <td>
+                  <span class="fw-semibold text-dark">${escHtml(art.name)}</span>
+                  ${art.supplier ? `<small class="d-block text-muted">Fournisseur : ${escHtml(art.supplier)}</small>` : ''}
+                </td>
+                <td>${escHtml(art.category)}</td>
+                <td class="small text-muted">${escHtml(art.location || 'Magasin Central')}</td>
+                <td>${escHtml(art.unit)}</td>
+                <td class="small">${art.unit_cost ? formatCurrency(art.unit_cost) : '—'}</td>
+                <td class="fw-bold ${qtyClass}">${art.quantity}</td>
+                <td class="text-muted small">${art.threshold}${art.maximum_threshold ? ` / ${art.maximum_threshold}` : ''}</td>
+                <td>${badgeHtml}</td>
+                <td class="text-end text-nowrap">
+                  <button class="btn-gp-icon admin-only-feature" type="button" title="Modifier la fiche" onclick="openEditArticle(${art.id})"><i class="bi bi-pencil-square"></i></button>
+                  <button class="btn-gp-icon text-danger superadmin-only-feature" type="button" title="Supprimer l’article" onclick="deleteArticle(${art.id}, '${escHtml(art.name)}')"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm btn-outline-primary collaborator-only-feature py-0 px-2" type="button" onclick="preselectArticleForRequest(${art.id})"><i class="bi bi-plus-lg me-1"></i> Demander</button>
+                </td>
+              </tr>`;
+          }).join('');
         }
       }
 
-      // Mettre à jour les options de sélection pour le mouvement de stock
       const mvtSelect = document.getElementById('mvtArticle');
       if (mvtSelect) {
-        mvtSelect.innerHTML = '<option value="">Sélectionner un article du stock...</option>';
-        articles.forEach(art => {
-          const opt = document.createElement('option');
-          opt.value = art.id;
-          opt.textContent = `${art.code} - ${art.name} (${art.quantity} en stock)`;
-          mvtSelect.appendChild(opt);
-        });
+        const prev = mvtSelect.value;
+        mvtSelect.innerHTML = '<option value="">Sélectionner un article du stock...</option>' + articles.map(art => `<option value="${art.id}">${escHtml(art.code)} - ${escHtml(art.name)} (${art.quantity} en stock)</option>`).join('');
+        if ([...mvtSelect.options].some(o => o.value === prev)) mvtSelect.value = prev;
       }
 
       this.renderSelectableArticles(articles);
 
-      // Mettre à jour le widget "Catalogue rapide" du dashboard Collaborateur
       const quickCatalog = document.getElementById('collabQuickCatalogList');
       if (quickCatalog) {
-        quickCatalog.innerHTML = '';
-        const availableArticles = articles.filter(a => a.quantity > 0).slice(0, 4);
-        if (availableArticles.length === 0) {
-          quickCatalog.innerHTML = '<div class="p-3 text-center text-muted small bg-light rounded"><i class="bi bi-box me-1"></i> Aucun article disponible dans le catalogue pour le moment.</div>';
-        } else {
-          availableArticles.forEach(art => {
-            let icon = 'bi-box-seam';
-            if (art.category === 'Informatique') icon = 'bi-laptop';
-            else if (art.category === 'Papeterie') icon = 'bi-journal-text';
-            else if (art.category === 'Gadgets') icon = 'bi-tag';
-
-            const card = document.createElement('div');
-            card.className = 'supply-quick-card';
-            card.innerHTML = `
+        const availableArticles = articles.filter(a => a.quantity > 0).slice(0, 5);
+        quickCatalog.innerHTML = availableArticles.length
+          ? availableArticles.map(art => `
+            <div class="supply-quick-card">
               <div class="d-flex align-items-center gap-3">
-                <div class="p-2 rounded bg-light text-primary"><i class="bi ${icon} fs-5"></i></div>
+                <div class="p-2 rounded bg-light text-primary"><i class="bi bi-box-seam fs-5"></i></div>
                 <div>
-                  <div class="fw-semibold text-dark" style="font-size: 0.885rem;">${art.name}</div>
-                  <small class="${art.quantity <= art.threshold ? 'text-warning' : 'text-success'} fw-medium">${art.quantity} disponibles (${art.unit})</small>
+                  <div class="fw-semibold text-dark" style="font-size: 0.885rem;">${escHtml(art.name)}</div>
+                  <small class="${art.quantity <= art.threshold ? 'text-warning' : 'text-success'} fw-medium">${art.quantity} disponibles (${escHtml(art.unit)})</small>
                 </div>
               </div>
-              <button class="btn btn-sm btn-outline-primary" onclick="showToast('${art.name.replace(/'/g, "\\'")} sélectionné pour votre demande !', 'info'); navigateToView('request-new');">
-                <i class="bi bi-plus-lg"></i> Demander
-              </button>
-            `;
-            quickCatalog.appendChild(card);
-          });
-        }
+              <button class="btn btn-sm btn-outline-primary" type="button" onclick="preselectArticleForRequest(${art.id})"><i class="bi bi-plus-lg"></i> Demander</button>
+            </div>`).join('')
+          : '<div class="p-3 text-center text-muted small bg-light rounded">Aucun article disponible pour le moment.</div>';
       }
 
-      // Mettre à jour le widget "Stocks critiques à commander" du superviseur
       const criticalList = document.getElementById('supervisorCriticalStockList');
       const criticalBadge = document.getElementById('criticalStockBadge');
       if (criticalList) {
-        criticalList.innerHTML = '';
         const criticalArticles = articles.filter(a => a.quantity <= a.threshold);
         if (criticalBadge) criticalBadge.textContent = `${criticalArticles.length} alerte${criticalArticles.length > 1 ? 's' : ''}`;
-        if (criticalArticles.length === 0) {
-          criticalList.innerHTML = '<div class="p-3 text-center text-muted small bg-light rounded"><i class="bi bi-check-circle text-success me-1"></i> Aucun stock critique pour le moment.</div>';
-        } else {
-          criticalArticles.slice(0, 3).forEach(art => {
-            const div = document.createElement('div');
-            div.className = 'p-2 rounded bg-light border d-flex align-items-center justify-content-between';
-            div.innerHTML = `
+        criticalList.innerHTML = criticalArticles.length
+          ? criticalArticles.slice(0, 4).map(art => `
+            <div class="p-2 rounded bg-light border d-flex align-items-center justify-content-between">
               <div>
-                <strong class="text-dark d-block" style="font-size: 0.85rem;">${art.name}</strong>
-                <small class="text-danger fw-semibold">${art.quantity} ${art.unit} restant(s) (Seuil: ${art.threshold})</small>
+                <strong class="text-dark d-block" style="font-size: 0.85rem;">${escHtml(art.code)} — ${escHtml(art.name)}</strong>
+                <small class="text-danger fw-semibold">${art.quantity} ${escHtml(art.unit)} restant(s) (Seuil: ${art.threshold})</small>
               </div>
-              <button class="btn btn-sm btn-outline-warning py-0 px-2" data-bs-toggle="modal" data-bs-target="#modalNewMovement">Réapprovisionner</button>
-            `;
-            criticalList.appendChild(div);
-          });
-        }
+              <button class="btn btn-sm btn-outline-warning py-0 px-2" data-bs-toggle="modal" data-bs-target="#modalNewMovement">Approvisionner</button>
+            </div>`).join('')
+          : '<div class="p-3 text-center text-muted small bg-light rounded"><i class="bi bi-check-circle text-success me-1"></i> Aucun stock critique.</div>';
       }
 
       applyRoleVisibility(AppState.currentRole);
@@ -2197,13 +4881,12 @@ const BackendApi = {
     const tbody = document.getElementById('selectableArticlesTableBody');
     if (!tbody) return;
     tbody.innerHTML = '';
+    if (!articles.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">Aucun article au catalogue.</td></tr>';
+      return;
+    }
 
     articles.forEach(art => {
-      let icon = 'bi-box-seam';
-      if (art.category === 'Informatique') icon = 'bi-laptop';
-      else if (art.category === 'Papeterie') icon = 'bi-journal-text';
-      else if (art.category === 'Gadgets') icon = 'bi-tag';
-
       let badgeBg = 'bg-success-subtle text-success';
       if (art.quantity === 0) badgeBg = 'bg-danger-subtle text-danger';
       else if (art.quantity <= art.threshold) badgeBg = 'bg-warning-subtle text-warning-emphasis';
@@ -2217,27 +4900,17 @@ const BackendApi = {
       tr.setAttribute('data-article-stock', art.quantity);
 
       tr.innerHTML = `
-        <td>
-          <input type="checkbox" class="form-check-input article-select-checkbox" ${art.quantity === 0 ? 'disabled' : ''}>
-        </td>
-        <td>
-          <div class="d-flex align-items-center gap-2">
-            <i class="bi ${icon} text-primary"></i>
-            <span class="fw-semibold text-dark">${art.name}</span>
-          </div>
-        </td>
-        <td>${art.category}</td>
-        <td class="text-center">
-          <span class="badge ${badgeBg}">${art.quantity} ${art.unit}</span>
-        </td>
+        <td><input type="checkbox" class="form-check-input article-select-checkbox" ${art.quantity === 0 ? 'disabled' : ''}></td>
+        <td><span class="fw-semibold text-dark">${escHtml(art.name)}</span> <small class="text-muted">(${escHtml(art.code)})</small></td>
+        <td>${escHtml(art.category)}</td>
+        <td class="text-center"><span class="badge ${badgeBg}">${art.quantity} ${escHtml(art.unit)}</span></td>
         <td>
           <div class="input-group input-group-sm">
             <button class="btn btn-outline-secondary qty-btn-minus" type="button">-</button>
-            <input type="number" class="form-control text-center qty-input" value="1" min="1" max="${art.quantity}" ${art.quantity === 0 ? 'disabled' : ''}>
+            <input type="number" class="form-control text-center qty-input" value="1" min="1" max="${Math.max(1, art.quantity)}" ${art.quantity === 0 ? 'disabled' : ''}>
             <button class="btn btn-outline-secondary qty-btn-plus" type="button">+</button>
           </div>
-        </td>
-      `;
+        </td>`;
       tbody.appendChild(tr);
       bindSelectableArticleRow(tr);
     });
@@ -2252,123 +4925,99 @@ const BackendApi = {
 
       const requests = json.data;
       AppState.currentRequests = requests;
-      const pending = requests.filter(r => r.status === 'En attente');
-      const pendingCount = AppState.currentRole === 'collaborator' 
-        ? requests.filter(r => r.status === 'En attente' && (!AppState.currentUser || r.user_id == AppState.currentUser.id)).length
-        : pending.length;
+      populateRelationSelectors(requests, AppState.currentArticles || [], AppState.currentAssignees || []);
 
-      // Mettre à jour dynamiquement le compteur de demandes du profil
+      const pending = requests.filter(r => PENDING_REQUEST_STATUSES.includes(r.status));
+      const pendingCount = AppState.canManageOps
+        ? pending.length
+        : requests.filter(r => PENDING_REQUEST_STATUSES.includes(r.status) && Number(r.user_id) === Number(AppState.currentUser?.id)).length;
+
       const profCount = document.getElementById('profileCardDemandesCount');
       if (profCount) {
-        const myCount = AppState.currentUser ? requests.filter(r => r.user_id == AppState.currentUser.id).length : requests.length;
+        const myCount = AppState.currentUser ? requests.filter(r => Number(r.user_id) === Number(AppState.currentUser.id)).length : requests.length;
         profCount.textContent = `${myCount} demande${myCount > 1 ? 's' : ''}`;
       }
 
-      // Mettre à jour dynamiquement la notification devant "Demandes" et la cloche
       const sidebarBadge = document.getElementById('sidebarRequestsBadge');
-      if (sidebarBadge) {
-        sidebarBadge.textContent = pendingCount;
-      }
-      const notifBadge = document.getElementById('notifCountBadge');
-      if (notifBadge) {
-        notifBadge.textContent = pendingCount;
-      }
-      const dotAlert = document.getElementById('topbarNotifDot') || document.querySelector('.badge-dot-alert');
-      if (dotAlert) {
-        dotAlert.style.display = pendingCount > 0 ? 'block' : 'none';
-      }
+      if (sidebarBadge) sidebarBadge.textContent = pendingCount;
 
-      // 1. Table superviseur (Demandes en attente)
+      // Table superviseur
       const supTbody = document.getElementById('supervisorPendingRequestsTableBody');
       if (supTbody) {
-        supTbody.innerHTML = '';
-        if (pending.length === 0) {
-          supTbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Aucune demande en attente de validation.</td></tr>';
-        } else {
-          pending.forEach(r => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td class="fw-semibold text-primary">${r.reference}</td>
-              <td>
-                <div class="d-flex align-items-center gap-2">
-                  <img src="${r.user?.avatar || 'assets/avatars/aminata.svg'}" class="rounded-circle" width="24" height="24" alt="${r.user?.name || 'User'}">
-                  <span class="fw-medium text-dark">${r.user?.name || 'Collaborateur'} (${r.service})</span>
-                </div>
+        supTbody.innerHTML = pending.length
+          ? pending.slice(0, 8).map(r => `
+            <tr>
+              <td class="fw-semibold text-primary font-monospace">${escHtml(r.reference)}${r.is_overdue ? ' <span class="badge bg-danger ms-1">Retard</span>' : ''}</td>
+              <td><span class="fw-medium text-dark">${escHtml(r.user?.name || 'Collaborateur')}</span> <small class="text-muted">(${escHtml(r.service)})</small></td>
+              <td class="small"><strong>${escHtml(r.category || '')}</strong><div class="text-muted">${escHtml(r.motif)}</div></td>
+              <td>${requestStatusBadge(r.status)}</td>
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-success py-0 px-2 me-1" type="button" onclick="approveRequest('${escHtml(r.reference)}')"><i class="bi bi-check-lg"></i> Valider</button>
+                <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="openRequestDetail('${escHtml(r.reference)}')">Instruire</button>
               </td>
-              <td>${r.items?.length || 1} article(s) (${r.motif})</td>
-              <td><span class="badge-status badge-pending"><span class="badge-status-dot"></span> En attente</span></td>
-              <td class="text-end">
-                <button class="btn btn-sm btn-success py-0 px-2 me-1" onclick="approveRequest('${r.reference}', this)"><i class="bi bi-check-lg"></i> Approuver & Émettre Bon</button>
-                <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openRequestDetail('${r.reference}')">Détails</button>
-              </td>
-            `;
-            supTbody.appendChild(tr);
-          });
-        }
+            </tr>`).join('')
+          : '<tr><td colspan="5" class="text-center text-muted py-3">Aucune demande en attente de validation.</td></tr>';
       }
 
-      // 2. Table collaborateur (Mes demandes récentes)
+      // Table collaborateur
       const collabTbody = document.getElementById('collaboratorRecentRequestsTableBody');
       if (collabTbody) {
-        collabTbody.innerHTML = '';
-        requests.slice(0, 5).forEach(r => {
-          const badge = requestStatusBadge(r.status);
-
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="fw-semibold text-primary">${r.reference}</td>
-            <td>${r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'}) : 'Récemment'}</td>
-            <td>${r.items?.length || 1} article(s) (${r.motif})</td>
-            <td>${badge}</td>
-            <td class="text-end">
-              ${['Approuvée', 'Livrée', 'Restituée', 'Clôturée'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" onclick="openPdfModal('${r.reference}')">Bon PDF</button>` : ''}
-              <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openRequestDetail('${r.reference}')">Détails</button>
-            </td>
-          `;
-          collabTbody.appendChild(tr);
-        });
+        const myReqs = AppState.currentUser
+          ? requests.filter(r => Number(r.user_id) === Number(AppState.currentUser.id))
+          : requests;
+        collabTbody.innerHTML = myReqs.length
+          ? myReqs.slice(0, 6).map(r => `
+            <tr>
+              <td class="fw-semibold text-primary font-monospace">${escHtml(r.reference)}</td>
+              <td>${formatDateShort(r.created_at)}</td>
+              <td class="small"><strong>${escHtml(r.motif)}</strong><div class="text-muted">${escHtml(r.category || '')}</div></td>
+              <td>${requestStatusBadge(r.status)}</td>
+              <td class="text-end text-nowrap">
+                ${AUTHORIZED_REQUEST_STATUSES.includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="openPdfModal('${escHtml(r.reference)}')">Bon PDF</button>` : ''}
+                ${['Brouillon', 'À corriger', 'Soumise', 'En attente', 'En attente de vérification', 'En attente de validation', 'En attente de justification'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
+                <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="openRequestDetail('${escHtml(r.reference)}')">Suivre</button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="5" class="text-center text-muted py-3">Vous n’avez encore soumis aucune demande.</td></tr>';
       }
 
-      // 3. Table de la vue "Toutes les demandes"
+      // Table complète Toutes les demandes
       const allTbody = document.getElementById('allRequestsTableBody');
       if (allTbody) {
-        allTbody.innerHTML = '';
-        requests.forEach(r => {
-          const badge = requestStatusBadge(r.status);
-
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="fw-bold text-primary">${r.reference}</td>
-            <td>
-              <div class="d-flex align-items-center gap-2">
-                <img src="${r.user?.avatar || 'assets/avatars/aminata.svg'}" class="rounded-circle" width="26" height="26" alt="${r.user?.name || 'User'}">
-                <span class="fw-medium text-dark">${r.user?.name || 'Collaborateur'}</span>
-              </div>
-            </td>
-            <td>${r.service}</td>
-            <td>${r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui'}</td>
-            <td>${r.items?.length || 1} article(s)</td>
-            <td>${badge}</td>
-            <td class="text-end">
-              <button class="btn btn-sm btn-outline-primary" onclick="openRequestDetail('${r.reference}')">Consulter</button>
-            </td>
-          `;
-          allTbody.appendChild(tr);
-        });
+        allTbody.innerHTML = requests.length
+          ? requests.map(r => `
+            <tr data-status="${escHtml(r.status)}" data-category="${escHtml(r.category || '')}" data-urgency="${escHtml(r.urgency || 'Normale')}" data-overdue="${r.is_overdue ? '1' : '0'}">
+              <td class="fw-bold text-primary font-monospace">
+                ${escHtml(r.reference)}
+                ${r.is_overdue ? '<span class="badge bg-danger ms-1" title="Échéance dépassée">Retard</span>' : ''}
+              </td>
+              <td>
+                <div class="fw-medium text-dark">${escHtml(r.user?.name || 'Collaborateur')}</div>
+                <small class="text-muted">${escHtml(r.service || '')}</small>
+              </td>
+              <td class="small">
+                <span class="badge bg-light text-dark border">${escHtml(r.category || 'Général')}</span>
+                <div class="text-muted text-truncate" style="max-width:220px;">${escHtml(r.motif)}</div>
+              </td>
+              <td><span class="badge ${['Urgente', 'Critique'].includes(r.urgency) ? 'bg-danger-subtle text-danger' : 'bg-light text-secondary border'}">${escHtml(r.urgency || 'Normale')}</span></td>
+              <td class="small">${formatDateShort(r.created_at)}<div class="text-muted">Éch: ${formatDateShort(r.date_needed)}</div></td>
+              <td class="small">${r.items?.length ? `${r.items.length} réf.` : 'Prestation'}</td>
+              <td class="small">${escHtml(r.assignee?.name || '—')}</td>
+              <td>${requestStatusBadge(r.status)}</td>
+              <td class="text-end text-nowrap">
+                ${((AppState.currentUser && Number(r.user_id) === Number(AppState.currentUser.id)) || AppState.isSuperAdmin) && ['Brouillon', 'À corriger', 'Soumise', 'En attente', 'En attente de vérification', 'En attente de validation', 'En attente de justification'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
+                <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="openRequestDetail('${escHtml(r.reference)}')">Consulter</button>
+              </td>
+            </tr>`).join('')
+          : '<tr><td colspan="9" class="text-center text-muted py-4">Aucune demande enregistrée.</td></tr>';
       }
-
-      document.querySelectorAll('[data-view-target]').forEach(link => {
-        link.onclick = (e) => {
-          e.preventDefault();
-          navigateToView(link.getAttribute('data-view-target'));
-        };
-      });
     } catch (e) {
       console.warn('loadRequests error:', e);
     }
   },
 
   async loadMovements() {
+    if (!AppState.canManageOps) return;
     try {
       const res = await fetch(`${this.baseUrl}/movements`);
       if (!res.ok) return;
@@ -2376,48 +5025,54 @@ const BackendApi = {
       if (!json.success || !json.data) return;
 
       const movements = json.data;
+      AppState.currentMovements = movements;
       const tbody = document.getElementById('stockMovementsTableBody');
-      if (tbody) {
-        tbody.innerHTML = '';
-        movements.forEach(m => {
-          const isEntree = m.type === 'Entrée';
-          const sourceLabels = {
-            initial_stock: 'Stock initial',
-            manual_adjustment: 'Ajustement manuel',
-            request_approval: `Demande ${m.material_request?.reference || ''}`.trim(),
-            request_return: `Restitution ${m.material_request?.reference || ''}`.trim()
-          };
-          const sourceLabel = sourceLabels[m.source] || 'Ajustement manuel';
-          const tr = document.createElement('tr');
-          tr.setAttribute('data-type', m.type);
-          tr.innerHTML = `
-            <td class="text-muted small">${m.created_at ? new Date(m.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui'}</td>
-            <td>
-              <div class="d-flex align-items-center gap-2">
-                <i class="bi ${isEntree ? 'bi-arrow-down-left text-success' : 'bi-arrow-up-right text-danger'} fs-5"></i>
-                <span class="fw-semibold text-dark">${m.article?.name || 'Article en stock'}</span>
-              </div>
-            </td>
-            <td><span class="badge ${isEntree ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'} border">${m.type}</span></td>
-            <td class="fw-bold ${isEntree ? 'text-success' : 'text-danger'}">${isEntree ? '+' : '-'}${m.quantity}</td>
-            <td><span class="badge bg-light text-secondary border">${sourceLabel}</span></td>
-            <td>${m.user?.name || 'Administrateur'}</td>
-            <td>${m.reason}</td>
-          `;
-          tbody.appendChild(tr);
-        });
+      if (!tbody) return;
+
+      if (!movements.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Aucun mouvement de stock enregistré.</td></tr>';
+        return;
       }
+
+      const sourceLabels = {
+        initial_stock: 'Stock initial',
+        manual_adjustment: 'Saisie gestionnaire',
+        inventory_adjustment: 'Ajustement inventaire',
+        request_approval: 'Validation demande',
+        request_return: 'Restitution emprunt'
+      };
+
+      tbody.innerHTML = movements.map(m => {
+        const isPositive = ['Entrée', 'Retour'].includes(m.type);
+        const isTransfer = m.type === 'Transfert';
+        const sign = isTransfer ? '↔ ' : (isPositive ? '+' : '-');
+        const colorClass = isTransfer ? 'text-primary' : (isPositive ? 'text-success' : 'text-danger');
+        const badgeClass = isTransfer ? 'bg-info-subtle text-info-emphasis' : (isPositive ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger');
+        const dateIso = m.created_at ? String(m.created_at).slice(0, 10) : '';
+        const routeInfo = [m.from_location || m.from_service, m.to_location || m.to_service].filter(Boolean).join(' → ');
+
+        return `
+          <tr data-type="${escHtml(m.type)}" data-date="${escHtml(dateIso)}">
+            <td class="text-muted small text-nowrap">${formatDateTime(m.created_at)}</td>
+            <td><strong>${escHtml(m.article?.code || '')}</strong> ${escHtml(m.article?.name || 'Article')}</td>
+            <td><span class="badge ${badgeClass} border">${escHtml(m.type)}</span>${m.is_emergency ? ' <span class="badge bg-danger">Urgence</span>' : ''}</td>
+            <td class="fw-bold ${colorClass}">${sign}${m.quantity}</td>
+            <td class="small">
+              <span class="badge bg-light text-secondary border">${escHtml(sourceLabels[m.source] || m.source || 'Mouvement')}</span>
+              ${m.material_request?.reference ? `<div class="font-monospace text-primary">${escHtml(m.material_request.reference)}</div>` : ''}
+            </td>
+            <td class="small text-muted">${escHtml(routeInfo || '—')}</td>
+            <td class="small">${escHtml(m.user?.name || 'Système')}</td>
+            <td class="small">${escHtml(m.reason || m.justification || '—')}</td>
+          </tr>`;
+      }).join('');
     } catch (e) {
       console.warn('loadMovements error:', e);
     }
   },
 
   async loadDocuments() {
-    // Ne pas charger ni exposer les documents si le profil est collaborateur
-    if (AppState.currentRole !== 'admin') {
-      return;
-    }
-
+    if (!AppState.canManageOps) return;
     try {
       const res = await fetch(`${this.baseUrl}/documents`);
       if (!res.ok) return;
@@ -2425,64 +5080,45 @@ const BackendApi = {
       if (!json.success || !json.data) return;
 
       const docs = json.data;
+      AppState.currentDocuments = docs;
       const tbody = document.getElementById('documentsTableBody');
-      if (tbody) {
-        tbody.innerHTML = '';
-        if (docs.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-folder2-open me-2"></i>Aucun document administratif archivé.</td></tr>';
-        } else {
-          docs.forEach(doc => {
-            const tr = document.createElement('tr');
-            tr.setAttribute('data-cat', doc.category);
-            tr.setAttribute('data-type', doc.type);
-            tr.setAttribute('data-service', doc.service);
-            tr.innerHTML = `
-              <td>
-                <div class="d-flex align-items-center gap-2">
-                  <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
-                  <span class="fw-semibold text-dark">${doc.title}</span>
-                </div>
-              </td>
-              <td>${doc.category}</td>
-              <td><span class="badge bg-light text-secondary border">${doc.type}</span></td>
-              <td>${doc.service}</td>
-              <td class="text-muted small">${doc.created_at ? new Date(doc.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui'}</td>
-              <td class="text-end">
-                <button class="btn-gp-icon" title="Consulter le document" onclick="${doc.material_request?.reference ? `openPdfModal('${doc.material_request.reference}')` : `downloadDocument(${doc.id}, '${(doc.original_name || doc.title).replace(/'/g, "\\'")}')`}"><i class="bi bi-download"></i></button>
-                <button class="btn-gp-icon" title="Options"><i class="bi bi-three-dots"></i></button>
-              </td>
-            `;
-            tbody.appendChild(tr);
-          });
-        }
+      if (!tbody) return;
+
+      if (!docs.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">Aucun document administratif archivé.</td></tr>';
+        return;
       }
 
-      // Mettre à jour le widget "Documents administratifs" du dashboard Collaborateur
-      const quickDocs = document.getElementById('collabQuickDocumentsList');
-      if (quickDocs) {
-        quickDocs.innerHTML = '';
-        if (docs.length === 0) {
-          quickDocs.innerHTML = '<div class="p-3 text-center text-muted small bg-light rounded"><i class="bi bi-folder2-open me-1"></i> Aucun document administratif disponible pour le moment.</div>';
-        } else {
-          docs.slice(0, 3).forEach(doc => {
-            const docLink = document.createElement('a');
-            docLink.href = '#';
-            docLink.className = 'p-2 rounded bg-light text-decoration-none text-dark d-flex align-items-center justify-content-between';
-            docLink.innerHTML = `
-              <span class="d-flex align-items-center gap-2">
-                <i class="bi bi-file-earmark-pdf text-danger"></i>
-                ${doc.title}
-              </span>
-              <i class="bi bi-download text-muted"></i>
-            `;
-            docLink.onclick = (e) => {
-              e.preventDefault();
-              showToast(`Téléchargement de : ${doc.title}...`, 'info');
-            };
-            quickDocs.appendChild(docLink);
-          });
-        }
-      }
+      tbody.innerHTML = docs.map(doc => {
+        const iconMap = {
+          PDF: 'bi-file-earmark-pdf text-danger',
+          Word: 'bi-file-earmark-word text-primary',
+          Excel: 'bi-file-earmark-excel text-success',
+          Image: 'bi-file-earmark-image text-info'
+        };
+        const icon = iconMap[doc.type] || 'bi-file-earmark-text text-secondary';
+        return `
+          <tr data-cat="${escHtml(doc.category)}" data-type="${escHtml(doc.type)}" data-service="${escHtml(doc.service)}">
+            <td class="font-monospace small fw-semibold text-primary">${escHtml(doc.reference || `DOC-${doc.id}`)}</td>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <i class="bi ${icon} fs-5"></i>
+                <div>
+                  <span class="fw-semibold text-dark">${escHtml(doc.title)}</span>
+                  ${doc.file_size ? `<small class="d-block text-muted">${escHtml(doc.file_size)}</small>` : ''}
+                </div>
+              </div>
+            </td>
+            <td>${escHtml(doc.category)}</td>
+            <td><span class="badge bg-light text-secondary border">${escHtml(doc.type)}</span></td>
+            <td>${escHtml(doc.service)}</td>
+            <td class="text-muted small">${formatDateShort(doc.created_at)}</td>
+            <td class="text-end text-nowrap">
+              <button class="btn-gp-icon" type="button" title="Télécharger / Aperçu" onclick="${doc.material_request?.reference && String(doc.reference || '').startsWith('BON-') ? `openPdfModal('${escHtml(doc.material_request.reference)}')` : `downloadDocument(${doc.id}, '${escHtml(doc.original_name || doc.title)}')`}"><i class="bi bi-download"></i></button>
+              <button class="btn-gp-icon text-danger" type="button" title="Supprimer" onclick="deleteDocument(${doc.id}, '${escHtml(doc.title)}')"><i class="bi bi-trash"></i></button>
+            </td>
+          </tr>`;
+      }).join('');
     } catch (e) {
       console.warn('loadDocuments error:', e);
     }
@@ -2490,70 +5126,47 @@ const BackendApi = {
 
   async loadDashboard() {
     try {
-      const userParam = AppState.currentUser?.id ? `&user_id=${AppState.currentUser.id}` : '';
-      const res = await fetch(`${this.baseUrl}/dashboard?role=${AppState.currentRole}${userParam}`);
+      const res = await fetch(`${this.baseUrl}/dashboard`);
       if (!res.ok) return;
       const json = await res.json();
       if (!json.success || !json.kpis) return;
 
       const kpis = json.kpis;
-      const elTot = document.getElementById('kpiTotalArticles');
-      const elLow = document.getElementById('kpiLowStock');
-      const elPend = document.getElementById('kpiPendingRequests');
-      const elAppr = document.getElementById('kpiApprovedRequests');
+      const setTxt = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.textContent = v; };
 
-      if (elTot && kpis.total_articles !== undefined) elTot.textContent = kpis.total_articles;
-      if (elLow && kpis.low_stock_count !== undefined) elLow.textContent = kpis.low_stock_count;
-      if (elPend && kpis.pending_requests !== undefined) elPend.textContent = kpis.pending_requests;
-      if (elAppr && kpis.approved_requests !== undefined) elAppr.textContent = kpis.approved_requests;
+      setTxt('kpiTotalArticles', kpis.total_articles);
+      setTxt('kpiLowStock', kpis.low_stock_count);
+      setTxt('kpiPendingRequests', kpis.pending_requests);
+      setTxt('kpiApprovedRequests', kpis.approved_requests);
+      if (kpis.stock_value !== undefined) setTxt('kpiStockTotalValue', formatCurrency(kpis.stock_value));
+      setTxt('kpiOutOfStockCount', kpis.out_of_stock_count);
+      setTxt('kpiOverdueRequestsCount', kpis.overdue_requests);
 
-      const elCollabInProg = document.getElementById('kpiCollabInProgress');
-      const elCollabApproved = document.getElementById('kpiCollabApproved');
-      const elCollabReceived = document.getElementById('kpiCollabReceivedMonth');
-      const elCollabLatestRef = document.getElementById('kpiCollabLatestRef');
-
-      if (elCollabInProg && kpis.requests_in_progress !== undefined) {
-        elCollabInProg.textContent = kpis.requests_in_progress;
+      if (kpis.requests_in_progress !== undefined) {
+        setTxt('kpiCollabInProgress', kpis.requests_in_progress);
         const collabBadge = document.getElementById('kpiCollabInProgressBadge');
         if (collabBadge) {
           const val = Number(kpis.requests_in_progress || 0);
           collabBadge.style.display = val > 0 ? 'inline-block' : 'none';
-          collabBadge.textContent = `${val} en attente`;
+          collabBadge.textContent = `${val} en cours`;
         }
       }
-      if (elCollabApproved && kpis.requests_approved !== undefined) elCollabApproved.textContent = kpis.requests_approved;
-      if (elCollabReceived && kpis.articles_received_month !== undefined) elCollabReceived.textContent = kpis.articles_received_month;
-      if (elCollabLatestRef && kpis.latest_request !== undefined) {
-        elCollabLatestRef.textContent = kpis.latest_request || '-';
+      setTxt('kpiCollabApproved', kpis.requests_approved);
+      setTxt('kpiCollabReceivedMonth', kpis.articles_received_month);
+      if (kpis.latest_request !== undefined) {
+        setTxt('kpiCollabLatestRef', kpis.latest_request || '-');
         const latestStatus = document.getElementById('kpiCollabLatestStatus');
         if (latestStatus) {
-          latestStatus.style.display = (kpis.latest_request && kpis.latest_request !== '-') ? 'inline-block' : 'none';
+          latestStatus.style.display = kpis.latest_request && kpis.latest_request !== '-' ? 'inline-block' : 'none';
+          latestStatus.textContent = kpis.latest_status || 'Enregistrée';
         }
       }
 
-      // Synchroniser le badge du menu Demandes et de notification
-      const activePendingCount = AppState.currentRole === 'collaborator'
-        ? Number(kpis.requests_in_progress || 0)
-        : Number(kpis.pending_requests || 0);
-
-      const sidebarBadge = document.getElementById('sidebarRequestsBadge');
-      if (sidebarBadge) {
-        sidebarBadge.textContent = activePendingCount;
-      }
-      const notifBadge = document.getElementById('notifCountBadge');
-      if (notifBadge) {
-        notifBadge.textContent = activePendingCount;
-      }
-      const dotAlert = document.getElementById('topbarNotifDot') || document.querySelector('.badge-dot-alert');
-      if (dotAlert) {
-        dotAlert.style.display = activePendingCount > 0 ? 'block' : 'none';
-      }
-
-      // Mettre à jour les graphiques Chart.js dynamiques
-      if (typeof initDashboardCharts === 'function') {
+      if (typeof initDashboardCharts === 'function' && json.role === 'admin') {
         initDashboardCharts({
           categories: json.categories_distribution || [],
-          totalArticles: Number(kpis.total_articles || 0)
+          totalArticles: Number(kpis.total_articles || 0),
+          monthlyEvolution: json.monthly_evolution || null
         });
       }
     } catch (e) {
@@ -2561,103 +5174,56 @@ const BackendApi = {
     }
   },
 
-  async approveRequest(requestId, triggerBtn = null) {
-    if (!this.isOnline || !this.isDbConnected) {
-      showToast('Le service de données est indisponible. Le bon ne peut pas être généré.', 'danger');
-      return false;
-    }
+  async approveRequest(requestId, extraPayload = {}) {
     try {
-      const res = await fetch(`${this.baseUrl}/requests/${requestId}/approve`, {
+      const res = await fetch(`${this.baseUrl}/requests/${encodeURIComponent(requestId)}/approve`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ approved_by: AppState.currentUser?.id || null })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(extraPayload)
       });
       const data = await res.json();
-      if (data.success) {
-        showToast(`Demande ${requestId} approuvée ! Le stock a été décompté et le Bon archivé.`, 'success');
-        await this.refreshAll({ showIndicator: true });
+      if (res.ok && data.success) {
+        showToast(data.message || `Demande ${requestId} validée !`, 'success');
+        await this.refreshAll({ showIndicator: true, silent: true });
+        if (AppState.currentView === 'request-detail') await openRequestDetail(requestId);
         return true;
-      } else {
-        showToast(data.message || 'Erreur lors de l\'approbation.', 'danger');
-        return false;
       }
+      showToast(data.message || 'Erreur lors de la validation.', 'danger');
+      return false;
     } catch (e) {
-      console.warn('API approve error:', e.message);
-      showToast('Impossible d’approuver la demande. Vérifiez la connexion au serveur.', 'danger');
+      showToast('Impossible de valider la demande.', 'danger');
       return false;
     }
   },
 
   async rejectRequest(requestId, reason = '') {
-    if (!this.isOnline || !this.isDbConnected) return;
-    try {
-      const res = await fetch(`${this.baseUrl}/requests/${requestId}/reject`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ reason: reason || 'Demande non validée par le gestionnaire' })
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`Demande ${requestId} rejetée. Le collaborateur a été notifié.`, 'info');
-        await this.refreshAll({ showIndicator: true });
-      } else {
-        showToast(data.message || 'Erreur lors du rejet.', 'danger');
-      }
-    } catch (e) {
-      console.warn('API reject error:', e.message);
-    }
+    return this.transitionRequest(requestId, 'reject', { reason });
   },
 
   async transitionRequest(requestId, action, payload = {}) {
-    if (!this.isOnline || !this.isDbConnected) return false;
     try {
       const res = await fetch(`${this.baseUrl}/requests/${encodeURIComponent(requestId)}/${action}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        showToast(data.message || 'Le changement de statut a échoué.', 'danger');
+        const msg = Object.values(data.errors || {}).flat()[0] || data.message || 'Le changement de statut a échoué.';
+        showToast(msg, 'danger');
         return false;
       }
       showToast(data.message || 'Statut de la demande mis à jour.', 'success');
-      await this.refreshAll({ showIndicator: true });
-      openRequestDetail(requestId);
+      await this.refreshAll({ showIndicator: true, silent: true });
+      await openRequestDetail(requestId);
       return true;
     } catch (e) {
-      console.warn('API request transition error:', e.message);
       showToast('Impossible de mettre à jour la demande.', 'danger');
       return false;
     }
   },
 
   async returnRequest(requestId) {
-    if (!this.isOnline || !this.isDbConnected) return;
-    try {
-      const res = await fetch(`${this.baseUrl}/requests/${requestId}/return`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`Demande ${requestId} marquée comme Restituée ! Le matériel a été réintégré en stock.`, 'success');
-        await this.refreshAll({ showIndicator: true });
-      } else {
-        showToast(data.message || 'Erreur lors de la restitution.', 'danger');
-      }
-    } catch (e) {
-      console.warn('API return error:', e.message);
-    }
+    return this.transitionRequest(requestId, 'return');
   }
 };
-

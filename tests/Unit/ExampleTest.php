@@ -23,7 +23,7 @@ class ExampleTest extends TestCase
     public function test_user_roles_are_normalized_in_one_place(): void
     {
         $this->assertSame(User::ROLE_ADMIN, User::normalizeRole('Administrateur'));
-        $this->assertSame(User::ROLE_ADMIN, User::normalizeRole('manager'));
+        $this->assertSame(User::ROLE_MANAGER, User::normalizeRole('manager'));
         $this->assertSame(User::ROLE_COLLABORATOR, User::normalizeRole('Collaborateur'));
         $this->assertSame(User::ROLE_COLLABORATOR, User::normalizeRole(null));
     }

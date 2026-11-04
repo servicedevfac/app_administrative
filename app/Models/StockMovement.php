@@ -18,6 +18,8 @@ class StockMovement extends Model
 
     public const SOURCE_REQUEST_RETURN = 'request_return';
 
+    public const SOURCE_INVENTORY_ADJUSTMENT = 'inventory_adjustment';
+
     protected $fillable = [
         'article_id',
         'user_id',
@@ -25,11 +27,19 @@ class StockMovement extends Model
         'type',
         'source',
         'quantity',
+        'from_location',
+        'to_location',
+        'from_service',
+        'to_service',
+        'is_emergency',
+        'validation_status',
         'reason',
+        'justification',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
+        'is_emergency' => 'boolean',
     ];
 
     public function article(): BelongsTo

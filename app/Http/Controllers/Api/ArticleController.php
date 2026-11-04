@@ -24,8 +24,16 @@ class ArticleController extends Controller
             $query->where('category', $request->category);
         }
 
+        if ($request->filled('location')) {
+            $query->where('location', $request->location);
+        }
+
         if ($request->filled('status')) {
-            if ($request->status === 'faible' || $request->status === 'Stock faible') {
+            if ($request->status === 'rupture' || $request->status === 'En rupture') {
+                $query->where('quantity', '<=', 0);
+            } elseif ($request->status === 'faible' || $request->status === 'Stock faible') {
+                $query->where('quantity', '>', 0)->whereColumn('quantity', '<=', 'threshold');
+            } elseif ($request->status === 'alerte') {
                 $query->whereColumn('quantity', '<=', 'threshold');
             } elseif ($request->status === 'dispo' || $request->status === 'En stock') {
                 $query->whereColumn('quantity', '>', 'threshold');
@@ -34,24 +42,113 @@ class ArticleController extends Controller
 
         if ($request->filled('search')) {
             $search = $request->search;
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search): void {
                 $q->where('name', 'like', "%{$search}%")
                     ->orWhere('code', 'like', "%{$search}%")
-                    ->orWhere('category', 'like', "%{$search}%");
+                    ->orWhere('category', 'like', "%{$search}%")
+                    ->orWhere('supplier', 'like', "%{$search}%")
+                    ->orWhere('location', 'like', "%{$search}%");
             });
         }
 
         $articles = $query->orderBy('id', 'desc')->get();
+        $totalStockValue = (float) $articles->sum(fn (Article $a): float => $a->quantity * (float) ($a->unit_cost ?? 0));
 
         return response()->json([
             'success' => true,
             'count' => $articles->count(),
+            'total_stock_value' => round($totalStockValue, 2),
             'data' => $articles,
         ]);
     }
 
     /**
-     * Enregistrer un nouvel article (Magasinier / Administrateur uniquement)
+     * État de réapprovisionnement : liste des articles en rupture ou sous le seuil minimum à commander
+     */
+    public function replenishment(): JsonResponse
+    {
+        $articles = Article::query()
+            ->whereColumn('quantity', '<=', 'threshold')
+            ->orderBy('quantity')
+            ->orderBy('name')
+            ->get()
+            ->map(function (Article $article): array {
+                $targetMax = $article->maximum_threshold && $article->maximum_threshold > $article->threshold
+                    ? $article->maximum_threshold
+                    : max($article->threshold * 2, $article->threshold + 5);
+                $suggestedQty = max(1, $targetMax - $article->quantity);
+                $unitCost = (float) ($article->unit_cost ?? 0);
+
+                return [
+                    'id' => $article->id,
+                    'code' => $article->code,
+                    'name' => $article->name,
+                    'category' => $article->category,
+                    'unit' => $article->unit,
+                    'location' => $article->location,
+                    'supplier' => $article->supplier,
+                    'quantity' => $article->quantity,
+                    'threshold' => $article->threshold,
+                    'maximum_threshold' => $targetMax,
+                    'suggested_order_quantity' => $suggestedQty,
+                    'unit_cost' => $unitCost,
+                    'estimated_order_cost' => round($suggestedQty * $unitCost, 2),
+                    'urgency' => $article->quantity <= 0 ? 'Rupture critique' : 'Sous seuil minimum',
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'count' => $articles->count(),
+            'total_estimated_cost' => round((float) $articles->sum('estimated_order_cost'), 2),
+            'data' => $articles->values(),
+        ]);
+    }
+
+    /**
+     * Export CSV de l'état de réapprovisionnement
+     */
+    public function exportReplenishment(): StreamedResponse
+    {
+        $articles = Article::query()
+            ->whereColumn('quantity', '<=', 'threshold')
+            ->orderBy('quantity')
+            ->orderBy('name')
+            ->get();
+
+        return response()->streamDownload(function () use ($articles): void {
+            $output = fopen('php://output', 'wb');
+            fwrite($output, "\xEF\xBB\xBF");
+            fputcsv($output, ['Code', 'Désignation', 'Catégorie', 'Unité', 'Stock actuel', 'Seuil min', 'Seuil cible', 'Qté à commander', 'Fournisseur', 'Coût unitaire', 'Montant estimé'], ';');
+
+            foreach ($articles as $article) {
+                $targetMax = $article->maximum_threshold && $article->maximum_threshold > $article->threshold
+                    ? $article->maximum_threshold
+                    : max($article->threshold * 2, $article->threshold + 5);
+                $suggestedQty = max(1, $targetMax - $article->quantity);
+                $unitCost = (float) ($article->unit_cost ?? 0);
+
+                fputcsv($output, [
+                    $article->code,
+                    $article->name,
+                    $article->category,
+                    $article->unit,
+                    $article->quantity,
+                    $article->threshold,
+                    $targetMax,
+                    $suggestedQty,
+                    $article->supplier ?? '-',
+                    $unitCost,
+                    round($suggestedQty * $unitCost, 2),
+                ], ';');
+            }
+
+            fclose($output);
+        }, 'etat-reapprovisionnement-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    /**
+     * Enregistrer un nouvel article
      */
     public function store(Request $request): JsonResponse
     {
@@ -61,7 +158,10 @@ class ArticleController extends Controller
             'unit' => ['required', 'string', Rule::exists('measurement_units', 'name')->where('is_active', true)],
             'quantity' => 'required|integer|min:0',
             'threshold' => 'required|integer|min:1',
-            'location' => 'nullable|string',
+            'maximum_threshold' => 'nullable|integer|gte:threshold',
+            'unit_cost' => 'nullable|numeric|min:0',
+            'supplier' => 'nullable|string|max:255',
+            'location' => 'nullable|string|max:255',
         ]);
 
         $stockState = Article::stockState($validated['quantity'], $validated['threshold']);
@@ -93,18 +193,19 @@ class ArticleController extends Controller
                     'type' => 'Entrée',
                     'source' => StockMovement::SOURCE_INITIAL_STOCK,
                     'quantity' => $validated['quantity'],
-                    'reason' => 'Stock initial / Création de l\'article',
+                    'to_location' => $article->location,
+                    'reason' => "Stock initial / Création de l'article",
                 ]);
             }
 
             return $article;
         }, attempts: 5);
 
-        $this->recordActivity($request, 'article.created', $article, "Article {$article->code} créé.");
+        $this->recordActivity($request, 'article.created', $article, "Article {$article->code} ({$article->name}) créé.");
 
         return response()->json([
             'success' => true,
-            'message' => "Article \"{$article->name}\" ajouté au stock avec succès.",
+            'message' => "Article \"{$article->name}\" ({$article->code}) ajouté au stock avec succès.",
             'data' => $article,
         ], 201);
     }
@@ -114,7 +215,7 @@ class ArticleController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $article = Article::with('stockMovements')->findOrFail($id);
+        $article = Article::with('stockMovements.user')->findOrFail($id);
 
         return response()->json([
             'success' => true,
@@ -128,6 +229,7 @@ class ArticleController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $article = Article::findOrFail($id);
+        $before = $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'maximum_threshold', 'unit_cost', 'supplier', 'location']);
 
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
@@ -135,7 +237,10 @@ class ArticleController extends Controller
             'unit' => ['sometimes', 'string', Rule::exists('measurement_units', 'name')->where('is_active', true)],
             'quantity' => 'sometimes|integer|min:0',
             'threshold' => 'sometimes|integer|min:1',
-            'location' => 'nullable|string',
+            'maximum_threshold' => 'nullable|integer|min:1',
+            'unit_cost' => 'nullable|numeric|min:0',
+            'supplier' => 'nullable|string|max:255',
+            'location' => 'nullable|string|max:255',
         ]);
 
         if (isset($validated['quantity']) || isset($validated['threshold'])) {
@@ -147,7 +252,10 @@ class ArticleController extends Controller
         }
 
         $article->update($validated);
-        $this->recordActivity($request, 'article.updated', $article, "Article {$article->code} mis à jour.");
+        $this->recordActivity($request, 'article.updated', $article, "Article {$article->code} mis à jour.", [
+            'before' => $before,
+            'after' => $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'maximum_threshold', 'unit_cost', 'supplier', 'location']),
+        ]);
 
         return response()->json([
             'success' => true,
@@ -157,7 +265,7 @@ class ArticleController extends Controller
     }
 
     /**
-     * Supprimer un article
+     * Supprimer un article (protégé si historisé)
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
@@ -165,7 +273,7 @@ class ArticleController extends Controller
         if ($article->requestItems()->exists() || $article->stockMovements()->exists()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Cet article possède un historique et ne peut pas être supprimé. Désactivez-le plutôt.',
+                'message' => 'Cet article possède un historique de mouvements ou de demandes et ne peut pas être supprimé.',
             ], 422);
         }
 
@@ -184,9 +292,11 @@ class ArticleController extends Controller
 
         return response()->streamDownload(function () use ($articles): void {
             $output = fopen('php://output', 'wb');
-            fputcsv($output, ['Code', 'Article', 'Catégorie', 'Unité', 'Quantité', 'Seuil', 'Statut', 'Emplacement'], ';');
+            fwrite($output, "\xEF\xBB\xBF");
+            fputcsv($output, ['Code', 'Article', 'Catégorie', 'Unité', 'Quantité', 'Seuil Min', 'Seuil Max', 'Coût unitaire', 'Valeur totale', 'Fournisseur', 'Statut', 'Emplacement'], ';');
 
             foreach ($articles as $article) {
+                $unitCost = (float) ($article->unit_cost ?? 0);
                 fputcsv($output, [
                     $article->code,
                     $article->name,
@@ -194,8 +304,12 @@ class ArticleController extends Controller
                     $article->unit,
                     $article->quantity,
                     $article->threshold,
+                    $article->maximum_threshold ?? '-',
+                    $unitCost,
+                    round($article->quantity * $unitCost, 2),
+                    $article->supplier ?? '-',
                     $article->status,
-                    $article->location,
+                    $article->location ?? '-',
                 ], ';');
             }
 

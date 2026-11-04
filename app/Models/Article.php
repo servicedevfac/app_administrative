@@ -22,6 +22,9 @@ class Article extends Model
         'unit',
         'quantity',
         'threshold',
+        'maximum_threshold',
+        'unit_cost',
+        'supplier',
         'location',
         'status',
         'is_available',
@@ -32,6 +35,8 @@ class Article extends Model
         'is_available' => 'boolean',
         'quantity' => 'integer',
         'threshold' => 'integer',
+        'maximum_threshold' => 'integer',
+        'unit_cost' => 'decimal:2',
     ];
 
     public function requestItems()

@@ -5,8 +5,15 @@
 
 let requestsChartInstance = null;
 let articlesDonutInstance = null;
+let lastDashboardChartData = null;
 
 function initDashboardCharts(data = null) {
+  if (data) {
+    lastDashboardChartData = data;
+  } else if (lastDashboardChartData) {
+    data = lastDashboardChartData;
+  }
+
   // 1. Graphique : Évolution des demandes
   const ctxRequests = document.getElementById('requestsEvolutionChart');
   if (ctxRequests) {
@@ -14,10 +21,11 @@ function initDashboardCharts(data = null) {
       requestsChartInstance.destroy();
     }
 
-    const labels = (data && data.evolutionLabels) ? data.evolutionLabels : ['Jan', 'Fév', 'Mars', 'Avr', 'Mai', 'Juin'];
-    const approvedData = (data && data.approved) ? data.approved : [0, 0, 0, 0, 0, 0];
-    const pendingData = (data && data.pending) ? data.pending : [0, 0, 0, 0, 0, 0];
-    const rejectedData = (data && data.rejected) ? data.rejected : [0, 0, 0, 0, 0, 0];
+    const evo = (data && data.monthlyEvolution) ? data.monthlyEvolution : null;
+    const labels = (evo && evo.labels) ? evo.labels : ((data && data.evolutionLabels) ? data.evolutionLabels : ['Jan', 'Fév', 'Mars', 'Avr', 'Mai', 'Juin']);
+    const approvedData = (evo && evo.approved) ? evo.approved : ((data && data.approved) ? data.approved : [0, 0, 0, 0, 0, 0]);
+    const pendingData = (evo && evo.pending) ? evo.pending : ((data && data.pending) ? data.pending : [0, 0, 0, 0, 0, 0]);
+    const rejectedData = (evo && evo.rejected) ? evo.rejected : ((data && data.rejected) ? data.rejected : [0, 0, 0, 0, 0, 0]);
 
     requestsChartInstance = new Chart(ctxRequests, {
       type: 'bar',
@@ -197,16 +205,32 @@ function initDashboardCharts(data = null) {
           const val = Number(cat.count || cat.total_qty || 0);
           const pct = totalArticles > 0 ? Math.round((val / totalArticles) * 100) : 0;
           const li = document.createElement('li');
-          li.className = 'd-flex align-items-center justify-content-between p-1 px-2 rounded';
+          li.className = 'd-flex align-items-center justify-content-between gap-2 p-1 px-2 rounded';
           li.style.background = '#f8fafc';
           li.style.border = '1px solid #f1f5f9';
-          li.innerHTML = `
-            <span class="d-flex align-items-center gap-2">
-              <span style="width: 10px; height: 10px; background: ${color}; border-radius: 50%; flex-shrink: 0;"></span>
-              <span class="text-secondary fw-medium">${cat.category}</span>
-            </span>
-            <strong class="text-dark">${pct}% (${val})</strong>
-          `;
+          li.style.minWidth = '0';
+
+          const leftSpan = document.createElement('span');
+          leftSpan.className = 'd-flex align-items-center gap-2 text-truncate';
+          leftSpan.style.minWidth = '0';
+
+          const dot = document.createElement('span');
+          dot.style.cssText = `width: 10px; height: 10px; background: ${color}; border-radius: 50%; flex-shrink: 0;`;
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'text-secondary fw-medium text-truncate';
+          nameSpan.title = String(cat.category || '');
+          nameSpan.textContent = String(cat.category || '');
+
+          leftSpan.appendChild(dot);
+          leftSpan.appendChild(nameSpan);
+
+          const strong = document.createElement('strong');
+          strong.className = 'text-dark text-nowrap';
+          strong.textContent = `${pct}% (${val})`;
+
+          li.appendChild(leftSpan);
+          li.appendChild(strong);
           legendList.appendChild(li);
         });
       }

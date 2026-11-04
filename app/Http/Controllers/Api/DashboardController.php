@@ -4,10 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Article;
+use App\Models\Asset;
+use App\Models\Expense;
 use App\Models\MaterialRequest;
+use App\Models\Vehicle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
@@ -16,31 +20,60 @@ class DashboardController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $role = $request->user()?->isAdmin() ? 'admin' : 'collaborator';
+        $role = $request->user()?->canManageOperations() ? 'admin' : 'collaborator';
         $userId = $request->user()?->id;
 
         if ($role === 'admin') {
             $totalArticles = Article::count();
             $lowStockCount = Article::whereColumn('quantity', '<=', 'threshold')->count();
-            $pendingRequests = MaterialRequest::where('status', 'En attente')->count();
-            $approvedRequests = MaterialRequest::where('status', 'Approuvée')->count();
+            $outOfStockCount = Article::where('quantity', '<=', 0)->count();
+            $pendingRequests = MaterialRequest::whereIn('status', MaterialRequest::PENDING_WORKFLOW_STATUSES)->count();
+            $approvedRequests = MaterialRequest::whereIn('status', array_merge(MaterialRequest::AUTHORIZED_STATUSES, [MaterialRequest::STATUS_CLOSED]))->count();
+            $overdueRequests = MaterialRequest::whereNotIn('status', array_merge(MaterialRequest::TERMINAL_STATUSES, [MaterialRequest::STATUS_DRAFT, MaterialRequest::STATUS_EXECUTED]))
+                ->whereDate('date_needed', '<', today())
+                ->count();
 
-            // Répartition par catégorie
+            $stockValue = (float) Article::selectRaw('SUM(quantity * COALESCE(unit_cost, 0)) as val')->value('val');
+            $unjustifiedAmount = Schema::hasTable('expenses')
+                ? (float) Expense::all()->sum(fn (Expense $e): float => $e->amount_to_justify)
+                : 0.0;
+
             $categories = Article::select('category', DB::raw('count(*) as count'), DB::raw('sum(quantity) as total_qty'))
                 ->groupBy('category')
                 ->get();
 
-            // Demandes urgentes à valider
+            $requestsByStatus = MaterialRequest::select('status', DB::raw('count(*) as count'))
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            $monthlyLabels = [];
+            $monthlyApproved = [];
+            $monthlyPending = [];
+            $monthlyRejected = [];
+            $monthNames = [1 => 'Jan', 2 => 'Fév', 3 => 'Mars', 4 => 'Avr', 5 => 'Mai', 6 => 'Juin', 7 => 'Juil', 8 => 'Août', 9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Déc'];
+
+            for ($i = 5; $i >= 0; $i--) {
+                $monthDate = now()->startOfMonth()->subMonths($i);
+                $start = $monthDate->copy()->startOfMonth();
+                $end = $monthDate->copy()->endOfMonth();
+                $monthlyLabels[] = $monthNames[(int) $monthDate->month].' '.$monthDate->format('y');
+
+                $monthQuery = MaterialRequest::whereBetween('created_at', [$start, $end]);
+                $monthlyApproved[] = (clone $monthQuery)->whereIn('status', array_merge(MaterialRequest::AUTHORIZED_STATUSES, [MaterialRequest::STATUS_CLOSED, MaterialRequest::STATUS_RETURNED]))->count();
+                $monthlyPending[] = (clone $monthQuery)->whereIn('status', MaterialRequest::PENDING_WORKFLOW_STATUSES)->count();
+                $monthlyRejected[] = (clone $monthQuery)->where('status', MaterialRequest::STATUS_REJECTED)->count();
+            }
+
             $urgentRequests = MaterialRequest::with(['user', 'items.article'])
-                ->where('status', 'En attente')
+                ->whereIn('status', MaterialRequest::PENDING_WORKFLOW_STATUSES)
+                ->orderByRaw("CASE WHEN urgency = 'Urgente' THEN 0 ELSE 1 END")
                 ->orderBy('created_at', 'desc')
-                ->limit(5)
+                ->limit(6)
                 ->get();
 
-            // Alertes stock critique
             $criticalStock = Article::whereColumn('quantity', '<=', 'threshold')
                 ->orderBy('quantity', 'asc')
-                ->limit(5)
+                ->limit(8)
                 ->get();
 
             return response()->json([
@@ -49,8 +82,21 @@ class DashboardController extends Controller
                 'kpis' => [
                     'total_articles' => $totalArticles,
                     'low_stock_count' => $lowStockCount,
+                    'out_of_stock_count' => $outOfStockCount,
                     'pending_requests' => $pendingRequests,
                     'approved_requests' => $approvedRequests,
+                    'overdue_requests' => $overdueRequests,
+                    'stock_value' => round($stockValue, 2),
+                    'unjustified_expenses' => round($unjustifiedAmount, 2),
+                    'assets_total' => Schema::hasTable('assets') ? Asset::count() : 0,
+                    'vehicles_alerts' => Schema::hasTable('vehicles') ? Vehicle::all()->filter(fn (Vehicle $v): bool => $v->has_alert)->count() : 0,
+                ],
+                'requests_by_status' => $requestsByStatus,
+                'monthly_evolution' => [
+                    'labels' => $monthlyLabels,
+                    'approved' => $monthlyApproved,
+                    'pending' => $monthlyPending,
+                    'rejected' => $monthlyRejected,
                 ],
                 'categories_distribution' => $categories,
                 'urgent_requests' => $urgentRequests,
@@ -58,14 +104,24 @@ class DashboardController extends Controller
             ]);
         }
 
-        // Collaborateur
+        // Employé / Collaborateur
         $myRequestsQuery = MaterialRequest::query();
         if ($userId) {
             $myRequestsQuery->where('user_id', $userId);
         }
 
-        $inProgress = (clone $myRequestsQuery)->whereIn('status', ['En attente'])->count();
-        $approved = (clone $myRequestsQuery)->whereIn('status', ['Approuvée', 'Restituée'])->count();
+        $inProgress = (clone $myRequestsQuery)->whereIn('status', array_merge(
+            MaterialRequest::PENDING_WORKFLOW_STATUSES,
+            [MaterialRequest::STATUS_CORRECTION, MaterialRequest::STATUS_EXECUTING, MaterialRequest::STATUS_PENDING_SUPPLY, MaterialRequest::STATUS_PENDING_JUSTIFICATION],
+        ))->count();
+        $approved = (clone $myRequestsQuery)->whereIn('status', [
+            MaterialRequest::STATUS_VALIDATED,
+            MaterialRequest::STATUS_APPROVED,
+            MaterialRequest::STATUS_EXECUTED,
+            MaterialRequest::STATUS_DELIVERED,
+            MaterialRequest::STATUS_RETURNED,
+            MaterialRequest::STATUS_CLOSED,
+        ])->count();
         $latest = (clone $myRequestsQuery)->orderBy('id', 'desc')->first();
 
         $recentRequests = (clone $myRequestsQuery)->with(['items.article'])
@@ -78,7 +134,7 @@ class DashboardController extends Controller
             $articlesReceived = (int) DB::table('request_items')
                 ->join('material_requests', 'material_requests.id', '=', 'request_items.material_request_id')
                 ->where('material_requests.user_id', $userId)
-                ->where('material_requests.status', 'Approuvée')
+                ->whereIn('material_requests.status', array_merge(MaterialRequest::AUTHORIZED_STATUSES, [MaterialRequest::STATUS_CLOSED, MaterialRequest::STATUS_RETURNED]))
                 ->sum('request_items.quantity_approved');
         }
 

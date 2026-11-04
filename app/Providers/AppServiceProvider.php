@@ -31,6 +31,7 @@ class AppServiceProvider extends ServiceProvider
 
             return User::query()
                 ->where('api_token_hash', hash('sha256', $token))
+                ->where('is_active', true)
                 ->first();
         });
     }
