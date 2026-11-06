@@ -20,6 +20,15 @@
 </head>
 <body>
 
+  <div id="globalSavingIndicator" class="global-saving-indicator" role="status" aria-live="polite" aria-hidden="true">
+    <span class="saving-spinner" aria-hidden="true"></span>
+    <span class="saving-indicator-copy">
+      <strong id="globalSavingIndicatorLabel">Enregistrement en cours…</strong>
+      <small>Veuillez patienter</small>
+    </span>
+    <span class="saving-progress" aria-hidden="true"></span>
+  </div>
+
   <!-- ==========================================================================
        CONTAINER PRINCIPAL APPLICATIF (SIDEBAR + TOPBAR + VUES METIER)
        ========================================================================== -->
@@ -57,12 +66,12 @@
           <span class="nav-badge bg-primary text-white" id="sidebarRequestsBadge">0</span>
         </a>
 
-        <a class="nav-item-link admin-only-feature" data-view-target="documents" href="#documents">
+        <a class="nav-item-link admin-only-feature" data-permission="documents.manage" data-view-target="documents" href="#documents">
           <i class="bi bi-folder2-open"></i>
           <span>Documents</span>
         </a>
 
-        <a class="nav-item-link admin-only-feature" data-view-target="operations" href="#operations">
+        <a class="nav-item-link admin-only-feature" data-permission="assets.manage,vehicles.manage,expenses.manage,expenses.validate,inventory.manage,inventory.validate,reports.view" data-view-target="operations" href="#operations">
           <i class="bi bi-buildings"></i>
           <span>Opérations & rapports</span>
         </a>
@@ -110,11 +119,6 @@
             <i class="bi bi-shield-check text-primary fs-6"></i>
             <span id="topbarActiveRoleText">Profil : Administrateur</span>
           </div>
-
-          <!-- Bouton Rafraîchissement -->
-          <button class="btn-icon-topbar" id="topbarBtnRefresh" title="Actualiser l'affichage" style="border: none; background: transparent; cursor: pointer;">
-            <i class="bi bi-arrow-clockwise fs-5 text-secondary" id="iconRefreshSpin"></i>
-          </button>
 
           <!-- Notification Bell -->
           <div class="btn-icon-topbar" title="Notifications" data-bs-toggle="dropdown" aria-expanded="false">
@@ -241,7 +245,7 @@
                     <div class="stat-value-group">
                       <span class="stat-number fs-5 text-dark fw-bold" id="kpiCollabLatestRef">-</span>
                     </div>
-                    <span class="badge-status badge-pending mt-1" id="kpiCollabLatestStatus" style="display: none;"><span class="badge-status-dot"></span> En attente</span>
+                    <span class="badge-status badge-pending mt-1" id="kpiCollabLatestStatus" style="display: none;"><span class="badge-status-dot"></span> Soumise</span>
                   </div>
                   <div class="stat-icon-wrapper stat-icon-orange">
                     <i class="bi bi-file-earmark-text"></i>
@@ -443,15 +447,6 @@
               <div class="col-6 col-md-3">
                 <div class="p-3 bg-white rounded border d-flex justify-content-between align-items-center">
                   <div>
-                    <div class="text-muted small">Demandes en retard</div>
-                    <div class="fw-bold text-danger fs-6" id="kpiOverdueRequestsCount">0</div>
-                  </div>
-                  <i class="bi bi-alarm text-danger fs-4"></i>
-                </div>
-              </div>
-              <div class="col-6 col-md-3">
-                <div class="p-3 bg-white rounded border d-flex justify-content-between align-items-center">
-                  <div>
                     <div class="text-muted small">Raccourci pilotage</div>
                     <a href="#operations" data-view-target="operations" class="fw-semibold text-primary small text-decoration-none">Centre d'opérations & Rapports →</a>
                   </div>
@@ -557,18 +552,18 @@
               <p class="page-subtitle">Patrimoine durable, parc automobile, dépenses & justificatifs, inventaires physiques et rapports périodiques</p>
             </div>
             <div class="d-flex flex-wrap gap-2">
-              <button class="btn-gp-secondary" type="button" id="btnOpenReportPrintPreview"><i class="bi bi-file-earmark-pdf text-danger"></i> Exporter PDF / Imprimer</button>
-              <button class="btn-gp-primary" type="button" id="btnExportFilteredReportCsv"><i class="bi bi-file-earmark-excel"></i> Exporter CSV</button>
+              <button class="btn-gp-secondary" type="button" id="btnOpenReportPrintPreview" data-permission="reports.view"><i class="bi bi-file-earmark-pdf text-danger"></i> Exporter PDF / Imprimer</button>
+              <button class="btn-gp-primary" type="button" id="btnExportFilteredReportCsv" data-permission="reports.view"><i class="bi bi-file-earmark-excel"></i> Exporter CSV</button>
             </div>
           </div>
 
           <div class="settings-nav-pills flex-wrap" id="operationsTabs">
-            <button class="settings-pill-btn active" type="button" data-operations-tab="overview"><i class="bi bi-speedometer2"></i> Synthèse</button>
-            <button class="settings-pill-btn" type="button" data-operations-tab="assets"><i class="bi bi-pc-display"></i> Patrimoine & Équipements</button>
-            <button class="settings-pill-btn" type="button" data-operations-tab="vehicles"><i class="bi bi-car-front"></i> Parc automobile</button>
-            <button class="settings-pill-btn" type="button" data-operations-tab="expenses"><i class="bi bi-cash-stack"></i> Dépenses & Décaissements</button>
-            <button class="settings-pill-btn" type="button" data-operations-tab="inventories"><i class="bi bi-clipboard-check"></i> Inventaires physiques</button>
-            <button class="settings-pill-btn" type="button" data-operations-tab="reports"><i class="bi bi-bar-chart"></i> Rapports & Statistiques</button>
+            <button class="settings-pill-btn active" type="button" data-operations-tab="overview" data-permission="assets.manage,vehicles.manage,expenses.manage,inventory.manage,reports.view"><i class="bi bi-speedometer2"></i> Synthèse</button>
+            <button class="settings-pill-btn" type="button" data-operations-tab="assets" data-permission="assets.manage"><i class="bi bi-pc-display"></i> Patrimoine & Équipements</button>
+            <button class="settings-pill-btn" type="button" data-operations-tab="vehicles" data-permission="vehicles.manage"><i class="bi bi-car-front"></i> Parc automobile</button>
+            <button class="settings-pill-btn" type="button" data-operations-tab="expenses" data-permission="expenses.manage,expenses.validate"><i class="bi bi-cash-stack"></i> Dépenses & Décaissements</button>
+            <button class="settings-pill-btn" type="button" data-operations-tab="inventories" data-permission="inventory.manage,inventory.validate"><i class="bi bi-clipboard-check"></i> Inventaires physiques</button>
+            <button class="settings-pill-btn" type="button" data-operations-tab="reports" data-permission="reports.view"><i class="bi bi-bar-chart"></i> Rapports & Statistiques</button>
           </div>
 
           <!-- ONGLET 1 : SYNTHÈSE OPÉRATIONNELLE -->
@@ -600,10 +595,9 @@
               </div>
               <div class="col-6 col-xl-3">
                 <div class="gp-card h-100 mb-0">
-                  <div class="text-muted small">Inventaires & Délais</div>
+                  <div class="text-muted small">Inventaires</div>
                   <div class="fs-2 fw-bold" id="opsInventoryOpen">0</div>
                   <div class="small text-warning" id="opsInventoryVariance">0 écart(s) d'inventaire</div>
-                  <div class="small text-danger mt-1" id="opsOverdueRequests">0 demande(s) en retard</div>
                 </div>
               </div>
             </div>
@@ -857,7 +851,7 @@
 
             <div class="gp-card mb-3">
               <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-                <h3 class="gp-card-title mb-0">Enregistrer une dépense / décaissement</h3>
+                <h3 class="gp-card-title mb-0" data-permission="expenses.manage">Enregistrer une dépense / décaissement</h3>
                 <div class="d-flex flex-wrap gap-2">
                   <button type="button" class="btn-gp-secondary btn-sm" onclick="exportTableAsPdf('expenses')">
                     <i class="bi bi-file-earmark-pdf text-danger"></i> Exporter PDF
@@ -867,7 +861,7 @@
                   </button>
                 </div>
               </div>
-              <form id="formNewExpense" class="row g-3" enctype="multipart/form-data">
+              <form id="formNewExpense" class="row g-3" data-permission="expenses.manage" enctype="multipart/form-data">
                 <div class="col-12 col-md-6 col-lg-4">
                   <label class="form-label small fw-semibold">Demande rattachée</label>
                   <select name="material_request_id" id="expenseRequestSelect" class="form-select">
@@ -979,7 +973,7 @@
 
           <!-- ONGLET 5 : MODULE 3 - INVENTAIRES PHYSIQUES -->
           <div id="operationsPane-inventories" class="operations-tab-pane" style="display:none">
-            <div class="gp-card mb-3">
+            <div class="gp-card mb-3" data-permission="inventory.manage">
               <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                 <h3 class="gp-card-title mb-0">Réaliser un inventaire physique (Général ou Partiel)</h3>
                 <div class="d-flex gap-2">
@@ -1097,16 +1091,9 @@
                   <select name="status" id="reportFilterStatus" class="form-select">
                     <option value="">Tous les statuts</option>
                     <option value="Soumise">Soumise</option>
-                    <option value="En attente de vérification">En attente de vérification</option>
                     <option value="En attente de validation">En attente de validation</option>
-                    <option value="Validée">Validée</option>
-                    <option value="En cours d'exécution">En cours d'exécution</option>
-                    <option value="En attente d'approvisionnement">En attente d'approvisionnement</option>
-                    <option value="Exécutée">Exécutée</option>
-                    <option value="En attente de justification">En attente de justification</option>
-                    <option value="Clôturée">Clôturée</option>
                     <option value="Rejetée">Rejetée</option>
-                    <option value="Annulée">Annulée</option>
+                    <option value="Validée">Validée</option>
                   </select>
                 </div>
                 <div class="col-12 col-sm-6 col-lg-4 col-xl-2">
@@ -1182,19 +1169,19 @@
               <p class="page-subtitle">Consultez les quantités disponibles, seuils min/max, emplacements et états de réapprovisionnement</p>
             </div>
             <div class="d-flex align-items-center flex-wrap gap-2">
-              <button class="btn-gp-secondary admin-only-feature" type="button" id="btnOpenReplenishmentModal">
+              <button class="btn-gp-secondary admin-only-feature" type="button" id="btnOpenReplenishmentModal" data-permission="stock.view">
                 <i class="bi bi-cart-check text-warning"></i> État de réapprovisionnement
               </button>
-              <button class="btn-gp-secondary admin-only-feature" type="button" onclick="exportTableAsPdf('articles')">
+              <button class="btn-gp-secondary admin-only-feature" type="button" data-permission="stock.view" onclick="exportTableAsPdf('articles')">
                 <i class="bi bi-file-earmark-pdf text-danger"></i> Exporter PDF
               </button>
-              <button class="btn-gp-secondary admin-only-feature" type="button" onclick="downloadAuthenticatedFile('/api/articles-export', 'etat-stock.csv')">
+              <button class="btn-gp-secondary admin-only-feature" type="button" data-permission="stock.view" onclick="downloadAuthenticatedFile('/api/articles-export', 'etat-stock.csv')">
                 <i class="bi bi-file-earmark-excel text-success"></i> Exporter CSV
               </button>
-              <button class="btn-gp-secondary admin-only-feature" data-view-target="stock-movements">
+              <button class="btn-gp-secondary admin-only-feature" data-permission="stock.view" data-view-target="stock-movements">
                 <i class="bi bi-clock-history"></i> Mouvements de stock
               </button>
-              <button class="btn-gp-primary admin-only-feature" data-bs-toggle="modal" data-bs-target="#modalNewArticle">
+              <button class="btn-gp-primary admin-only-feature" data-permission="stock.manage" data-bs-toggle="modal" data-bs-target="#modalNewArticle">
                 <i class="bi bi-plus-lg"></i> Nouvel article
               </button>
               <button class="btn-gp-primary collaborator-only-feature" data-view-target="request-new">
@@ -1363,9 +1350,13 @@
               <div class="col-12 col-md-6">
                 <label class="form-label fw-semibold">Type d'opération interne <span class="text-danger">*</span></label>
                 <select id="selectRequestTypeOp" class="form-select">
-                  <option value="Dotation permanente" selected>Dotation / Consommables / Prestation</option>
-                  <option value="Emprunt temporaire">Emprunt temporaire (matériel avec restitution)</option>
+                  <option value="Dotation permanente" selected>Dotation / consommable / prestation — sans restitution</option>
+                  <option value="Emprunt temporaire">Emprunt temporaire — matériel à restituer après utilisation</option>
                 </select>
+                <div class="form-text">
+                  <strong>Sans restitution :</strong> article consommé, équipement attribué définitivement ou service demandé.
+                  <strong>Emprunt temporaire :</strong> équipement prêté pour une durée limitée et rendu après utilisation.
+                </div>
               </div>
 
               <div class="col-12 col-md-6">
@@ -1484,9 +1475,6 @@
                 <i class="bi bi-arrow-left"></i> Précédent
               </button>
               <div class="d-flex gap-2">
-                <button type="button" id="btnSaveDraftRequest" class="btn-gp-secondary">
-                  <i class="bi bi-file-earmark-plus"></i> Enregistrer en brouillon
-                </button>
                 <button type="button" id="btnSubmitRequest" class="btn-gp-primary">
                   <i class="bi bi-send-check"></i> Soumettre la demande
                 </button>
@@ -1511,7 +1499,6 @@
                 <h1 class="page-title mb-0" id="detailRequestRef">Détails de la demande</h1>
                 <span id="requestDetailStatusBadge" class="badge-status badge-pending"><span class="badge-status-dot"></span> Soumise</span>
                 <span id="detailUrgencyBadge" class="badge bg-light text-dark border">Normale</span>
-                <span id="detailOverdueBadge" class="badge bg-danger text-white" style="display:none;"><i class="bi bi-alarm me-1"></i>En retard</span>
               </div>
               <p class="page-subtitle" id="detailRequestSubtitle">Consultez les informations et le circuit de validation de cette demande</p>
             </div>
@@ -1522,7 +1509,7 @@
                 <i class="bi bi-file-earmark-pdf text-danger"></i> Bon officiel PDF
               </button>
 
-              <!-- Actions du Demandeur (Modifier/Soumettre brouillon ou complément, Confirmer réception, Annuler) -->
+              <!-- Actions du demandeur : modifier, confirmer la réception ou retirer la demande -->
               <button class="btn-gp-primary" type="button" id="btnRequesterEditResubmit" style="display: none;">
                 <i class="bi bi-pencil-square me-1"></i> Modifier la demande
               </button>
@@ -1534,25 +1521,22 @@
               </button>
 
               <!-- Actions réservées au Responsable / Administrateur / Délégataire -->
-              <div class="dropdown admin-only-feature" id="requestTreatmentDropdown">
+              <div class="dropdown admin-only-feature" id="requestTreatmentDropdown" data-permission="requests.verify,requests.validate,requests.assign,requests.execute">
                 <button class="btn-gp-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                   <i class="bi bi-shield-check me-1"></i> Traiter la demande
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" style="min-width: 260px;">
-                  <li><button class="dropdown-item py-2 text-info fw-semibold" id="btnActionVerify"><i class="bi bi-search-heart me-2"></i> Vérifier disponibilité & pertinence</button></li>
-                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionApprove"><i class="bi bi-check-circle me-2"></i> Valider & Autoriser (Bon PDF)</button></li>
-                  <li><button class="dropdown-item py-2 text-warning fw-semibold" id="btnActionCorrection"><i class="bi bi-chat-left-dots me-2"></i> Demander un complément</button></li>
-                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionAssign"><i class="bi bi-person-check me-2"></i> Affecter à un agent</button></li>
+                  <li><button class="dropdown-item py-2 text-info fw-semibold" id="btnActionVerify" data-permission="requests.verify"><i class="bi bi-search-heart me-2"></i> Vérifier disponibilité & pertinence</button></li>
+                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionApprove" data-permission="requests.validate"><i class="bi bi-check-circle me-2"></i> Valider & Autoriser (Bon PDF)</button></li>
+                  <li><button class="dropdown-item py-2 text-warning fw-semibold" id="btnActionCorrection" data-permission="requests.validate"><i class="bi bi-chat-left-dots me-2"></i> Demander un complément</button></li>
+                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionAssign" data-permission="requests.assign"><i class="bi bi-person-check me-2"></i> Affecter à un agent</button></li>
                   <li><hr class="dropdown-divider"></li>
-                  <li><button class="dropdown-item py-2 text-primary" id="btnActionExecInProgress"><i class="bi bi-gear-wide-connected me-2"></i> Passer « En cours d'exécution »</button></li>
-                  <li><button class="dropdown-item py-2 text-warning" id="btnActionExecSupply"><i class="bi bi-truck me-2"></i> Passer « En attente d'approvisionnement »</button></li>
-                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionDeliver"><i class="bi bi-box-seam me-2"></i> Marquer « Exécutée / Livrée »</button></li>
-                  <li><button class="dropdown-item py-2 text-warning" id="btnActionExecJustification"><i class="bi bi-receipt me-2"></i> Passer « En attente de justification »</button></li>
-                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionReceive"><i class="bi bi-check2-square me-2"></i> Confirmer réception</button></li>
-                  <li><button class="dropdown-item py-2 text-primary" id="btnActionReturn"><i class="bi bi-arrow-return-left me-2"></i> Enregistrer restitution en stock</button></li>
-                  <li><button class="dropdown-item py-2 text-secondary fw-semibold" id="btnActionClose"><i class="bi bi-archive me-2"></i> Clôturer définitivement</button></li>
+                  <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionDeliver" data-permission="requests.execute"><i class="bi bi-box-seam me-2"></i> Enregistrer la remise / livraison</button></li>
+                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionReceive" data-permission="requests.execute"><i class="bi bi-check2-square me-2"></i> Confirmer réception</button></li>
+                  <li><button class="dropdown-item py-2 text-primary" id="btnActionReturn" data-permission="requests.execute"><i class="bi bi-arrow-return-left me-2"></i> Enregistrer restitution en stock</button></li>
+                  <li><button class="dropdown-item py-2 text-secondary fw-semibold" id="btnActionClose" data-permission="requests.execute"><i class="bi bi-archive me-2"></i> Clôturer définitivement</button></li>
                   <li><hr class="dropdown-divider"></li>
-                  <li><button class="dropdown-item py-2 text-danger fw-semibold" id="btnActionReject"><i class="bi bi-x-circle me-2"></i> Rejeter la demande (motif requis)</button></li>
+                  <li><button class="dropdown-item py-2 text-danger fw-semibold" id="btnActionReject" data-permission="requests.validate"><i class="bi bi-x-circle me-2"></i> Rejeter la demande (motif requis)</button></li>
                 </ul>
               </div>
             </div>
@@ -1663,7 +1647,7 @@
                     <div class="timeline-step" id="timelineStepApproved">
                       <div class="timeline-marker">3</div>
                       <div class="timeline-title">Exécution, Réception & Clôture</div>
-                      <div class="timeline-time">En attente</div>
+                      <div class="timeline-time">À traiter</div>
                     </div>
                   </div>
                 </div>
@@ -2051,20 +2035,10 @@
               <div class="toolbar-filters">
                 <select id="filterReqStatus" class="form-select-sm-custom">
                   <option value="">Tous les statuts</option>
-                  <option value="__OVERDUE__">⚠️ En retard uniquement</option>
-                  <option value="Brouillon">Brouillon</option>
                   <option value="Soumise">Soumise</option>
-                  <option value="En attente de vérification">En attente de vérification</option>
                   <option value="En attente de validation">En attente de validation</option>
-                  <option value="À corriger">À corriger (Complément requis)</option>
-                  <option value="Validée">Validée</option>
-                  <option value="En cours d'exécution">En cours d'exécution</option>
-                  <option value="En attente d'approvisionnement">En attente d'approvisionnement</option>
-                  <option value="Exécutée">Exécutée</option>
-                  <option value="En attente de justification">En attente de justification</option>
-                  <option value="Clôturée">Clôturée</option>
                   <option value="Rejetée">Rejetée</option>
-                  <option value="Annulée">Annulée</option>
+                  <option value="Validée">Validée</option>
                 </select>
 
                 <select id="filterReqCategory" class="form-select-sm-custom">
@@ -2097,19 +2071,21 @@
             </div>
 
             <div class="table-responsive">
-              <table class="gp-table">
+              <table class="gp-table requests-table">
                 <thead>
                   <tr>
-                    <th>N° Référence</th>
-                    <th>Demandeur & Service</th>
-                    <th>Catégorie & Motif</th>
-                    <th>Urgence</th>
-                    <th>Date & Délai</th>
+                    <th>Réf.</th>
+                    <th>Demandeur</th>
+                    <th>Catégorie / motif</th>
+                    <th>Priorité</th>
+                    <th>Dates</th>
+                    <th>Articles</th>
+                    <th>Affecté à</th>
                     <th>Statut</th>
                     <th class="text-end">Actions</th>
                   </tr>
                 </thead>
-                <tbody id="allRequestsTableBody"><tr><td colspan="7" class="text-center py-4 text-muted"><i class="bi bi-file-earmark-text me-2"></i>Aucune demande enregistrée pour le moment.</td></tr></tbody>
+                <tbody id="allRequestsTableBody"><tr><td colspan="9" class="text-center py-4 text-muted"><i class="bi bi-file-earmark-text me-2"></i>Aucune demande enregistrée pour le moment.</td></tr></tbody>
               </table>
             </div>
           </div>

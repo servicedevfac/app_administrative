@@ -37,4 +37,3 @@ class ApprovalDelegation extends Model
         return $this->belongsTo(User::class, 'delegate_id');
     }
 }
-

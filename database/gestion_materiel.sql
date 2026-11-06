@@ -58,7 +58,7 @@ CREATE TABLE `material_requests` (
   `date_needed` DATE DEFAULT NULL,
   `date_return` DATE DEFAULT NULL,
   `urgency` ENUM('Normale', 'Urgente', 'Planifiée') NOT NULL DEFAULT 'Normale',
-  `status` ENUM('En attente', 'Approuvée', 'Rejetée', 'Restituée') NOT NULL DEFAULT 'En attente',
+  `status` ENUM('Soumise', 'En attente de validation', 'Rejetée', 'Validée') NOT NULL DEFAULT 'Soumise',
   `notes` TEXT DEFAULT NULL,
   `rejection_reason` TEXT DEFAULT NULL,
   `approved_by` BIGINT UNSIGNED DEFAULT NULL,

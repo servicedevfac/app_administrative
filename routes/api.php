@@ -69,13 +69,13 @@ Route::middleware('auth:api')->group(function (): void {
     Route::put('/notifications/{notification}/read', [OperationsController::class, 'readNotification']);
 
     // Catalogue des articles en stock
-    Route::get('/articles', [ArticleController::class, 'index']);
-    Route::get('/articles/{id}', [ArticleController::class, 'show'])->whereNumber('id');
+    Route::get('/articles', [ArticleController::class, 'index'])->middleware('permission:stock.view');
+    Route::get('/articles/{id}', [ArticleController::class, 'show'])->middleware('permission:stock.view')->whereNumber('id');
 
     // Demandes (Employé + Responsable + Administrateur)
     Route::get('/requests', [MaterialRequestController::class, 'index']);
-    Route::post('/requests', [MaterialRequestController::class, 'store']);
-    Route::get('/requests-export', [MaterialRequestController::class, 'export'])->middleware('manager');
+    Route::post('/requests', [MaterialRequestController::class, 'store'])->middleware('permission:requests.create');
+    Route::get('/requests-export', [MaterialRequestController::class, 'export'])->middleware(['manager', 'permission:reports.view']);
     Route::get('/requests/{id}', [MaterialRequestController::class, 'show']);
     Route::put('/requests/{id}', [MaterialRequestController::class, 'update']);
     Route::post('/requests/{id}/attachments', [MaterialRequestController::class, 'addAttachment']);
@@ -89,72 +89,72 @@ Route::middleware('auth:api')->group(function (): void {
     // Opérations de Gestion (Responsable, Délégataire actif & Administrateur)
     Route::middleware('manager')->group(function (): void {
         // Circuit de validation et d'exécution des demandes
-        Route::put('/requests/{id}/verify', [MaterialRequestController::class, 'verify']);
-        Route::put('/requests/{id}/approve', [MaterialRequestController::class, 'approve']);
-        Route::put('/requests/{id}/reject', [MaterialRequestController::class, 'reject']);
-        Route::put('/requests/{id}/request-correction', [MaterialRequestController::class, 'requestCorrection']);
-        Route::put('/requests/{id}/assign', [MaterialRequestController::class, 'assign']);
-        Route::put('/requests/{id}/execution-status', [MaterialRequestController::class, 'updateExecutionStatus']);
-        Route::put('/requests/{id}/deliver', [MaterialRequestController::class, 'markDelivered']);
-        Route::put('/requests/{id}/return', [MaterialRequestController::class, 'markReturned']);
-        Route::put('/requests/{id}/close', [MaterialRequestController::class, 'close']);
+        Route::put('/requests/{id}/verify', [MaterialRequestController::class, 'verify'])->middleware('permission:requests.verify');
+        Route::put('/requests/{id}/approve', [MaterialRequestController::class, 'approve'])->middleware('permission:requests.validate');
+        Route::put('/requests/{id}/reject', [MaterialRequestController::class, 'reject'])->middleware('permission:requests.validate');
+        Route::put('/requests/{id}/request-correction', [MaterialRequestController::class, 'requestCorrection'])->middleware('permission:requests.validate');
+        Route::put('/requests/{id}/assign', [MaterialRequestController::class, 'assign'])->middleware('permission:requests.assign');
+        Route::put('/requests/{id}/execution-status', [MaterialRequestController::class, 'updateExecutionStatus'])->middleware('permission:requests.execute');
+        Route::put('/requests/{id}/deliver', [MaterialRequestController::class, 'markDelivered'])->middleware('permission:requests.execute');
+        Route::put('/requests/{id}/return', [MaterialRequestController::class, 'markReturned'])->middleware('permission:requests.execute');
+        Route::put('/requests/{id}/close', [MaterialRequestController::class, 'close'])->middleware('permission:requests.execute');
 
         // Stocks, Articles, Réapprovisionnement & Mouvements
-        Route::get('/articles-export', [ArticleController::class, 'export']);
-        Route::post('/articles', [ArticleController::class, 'store']);
-        Route::put('/articles/{id}', [ArticleController::class, 'update']);
-        Route::get('/articles-replenishment', [ArticleController::class, 'replenishment']);
-        Route::get('/articles-replenishment-export', [ArticleController::class, 'exportReplenishment']);
-        Route::get('/movements', [StockMovementController::class, 'index']);
-        Route::post('/movements', [StockMovementController::class, 'store']);
-        Route::get('/movements-export', [StockMovementController::class, 'export']);
+        Route::get('/articles-export', [ArticleController::class, 'export'])->middleware('permission:stock.view');
+        Route::post('/articles', [ArticleController::class, 'store'])->middleware('permission:stock.manage');
+        Route::put('/articles/{id}', [ArticleController::class, 'update'])->middleware('permission:stock.manage');
+        Route::get('/articles-replenishment', [ArticleController::class, 'replenishment'])->middleware('permission:stock.view');
+        Route::get('/articles-replenishment-export', [ArticleController::class, 'exportReplenishment'])->middleware('permission:stock.view');
+        Route::get('/movements', [StockMovementController::class, 'index'])->middleware('permission:stock.view');
+        Route::post('/movements', [StockMovementController::class, 'store'])->middleware('permission:stock.manage');
+        Route::get('/movements-export', [StockMovementController::class, 'export'])->middleware('permission:stock.view');
 
         // Inventaires physiques
-        Route::get('/inventories', [OperationsController::class, 'inventories']);
-        Route::post('/inventories', [OperationsController::class, 'storeInventory']);
-        Route::put('/inventories/{inventory}/validate', [OperationsController::class, 'validateInventory']);
+        Route::get('/inventories', [OperationsController::class, 'inventories'])->middleware('permission:inventory.manage,inventory.validate');
+        Route::post('/inventories', [OperationsController::class, 'storeInventory'])->middleware('permission:inventory.manage');
+        Route::put('/inventories/{inventory}/validate', [OperationsController::class, 'validateInventory'])->middleware('permission:inventory.validate');
 
         // Centre d'opérations : Patrimoine, Parc auto, Maintenance & Dépenses
-        Route::get('/operations/overview', [OperationsController::class, 'overview']);
-        Route::get('/operations/assignees', [OperationsController::class, 'assignees']);
+        Route::get('/operations/overview', [OperationsController::class, 'overview'])->middleware('permission:assets.manage,vehicles.manage,expenses.manage,inventory.manage,reports.view');
+        Route::get('/operations/assignees', [OperationsController::class, 'assignees'])->middleware('permission:requests.assign,assets.manage,vehicles.manage,expenses.manage');
 
-        Route::get('/assets', [OperationsController::class, 'assets']);
-        Route::get('/assets-export', [OperationsController::class, 'exportAssets']);
-        Route::post('/assets', [OperationsController::class, 'storeAsset']);
-        Route::put('/assets/{asset}', [OperationsController::class, 'updateAsset']);
-        Route::post('/assets/{asset}/assign', [OperationsController::class, 'assignAsset']);
-        Route::post('/assets/{asset}/return', [OperationsController::class, 'returnAsset']);
-        Route::post('/assets/{asset}/incidents', [OperationsController::class, 'storeAssetIncident']);
-        Route::put('/asset-incidents/{incident}/resolve', [OperationsController::class, 'resolveAssetIncident']);
+        Route::get('/assets', [OperationsController::class, 'assets'])->middleware('permission:assets.manage');
+        Route::get('/assets-export', [OperationsController::class, 'exportAssets'])->middleware('permission:assets.manage');
+        Route::post('/assets', [OperationsController::class, 'storeAsset'])->middleware('permission:assets.manage');
+        Route::put('/assets/{asset}', [OperationsController::class, 'updateAsset'])->middleware('permission:assets.manage');
+        Route::post('/assets/{asset}/assign', [OperationsController::class, 'assignAsset'])->middleware('permission:assets.manage');
+        Route::post('/assets/{asset}/return', [OperationsController::class, 'returnAsset'])->middleware('permission:assets.manage');
+        Route::post('/assets/{asset}/incidents', [OperationsController::class, 'storeAssetIncident'])->middleware('permission:assets.manage');
+        Route::put('/asset-incidents/{incident}/resolve', [OperationsController::class, 'resolveAssetIncident'])->middleware('permission:assets.manage');
 
-        Route::get('/vehicles', [OperationsController::class, 'vehicles']);
-        Route::get('/vehicles-export', [OperationsController::class, 'exportVehicles']);
-        Route::post('/vehicles', [OperationsController::class, 'storeVehicle']);
-        Route::put('/vehicles/{vehicle}', [OperationsController::class, 'updateVehicle']);
-        Route::post('/vehicles/{vehicle}/documents', [OperationsController::class, 'storeVehicleDocument']);
-        Route::get('/vehicle-documents/{document}/download', [OperationsController::class, 'downloadVehicleDocument']);
+        Route::get('/vehicles', [OperationsController::class, 'vehicles'])->middleware('permission:vehicles.manage');
+        Route::get('/vehicles-export', [OperationsController::class, 'exportVehicles'])->middleware('permission:vehicles.manage');
+        Route::post('/vehicles', [OperationsController::class, 'storeVehicle'])->middleware('permission:vehicles.manage');
+        Route::put('/vehicles/{vehicle}', [OperationsController::class, 'updateVehicle'])->middleware('permission:vehicles.manage');
+        Route::post('/vehicles/{vehicle}/documents', [OperationsController::class, 'storeVehicleDocument'])->middleware('permission:vehicles.manage');
+        Route::get('/vehicle-documents/{document}/download', [OperationsController::class, 'downloadVehicleDocument'])->middleware('permission:vehicles.manage');
 
-        Route::post('/maintenance-records', [OperationsController::class, 'storeMaintenance']);
-        Route::put('/maintenance-records/{maintenanceRecord}', [OperationsController::class, 'updateMaintenance']);
+        Route::post('/maintenance-records', [OperationsController::class, 'storeMaintenance'])->middleware('permission:assets.manage,vehicles.manage');
+        Route::put('/maintenance-records/{maintenanceRecord}', [OperationsController::class, 'updateMaintenance'])->middleware('permission:assets.manage,vehicles.manage');
 
-        Route::get('/expenses', [OperationsController::class, 'expenses']);
-        Route::get('/expenses-export', [OperationsController::class, 'exportExpenses']);
-        Route::post('/expenses', [OperationsController::class, 'storeExpense']);
-        Route::put('/expenses/{expense}', [OperationsController::class, 'updateExpense']);
-        Route::put('/expenses/{expense}/validate', [OperationsController::class, 'validateExpense']);
-        Route::post('/expenses/{expense}/attachments', [OperationsController::class, 'addExpenseAttachment']);
-        Route::get('/expense-attachments/{attachment}/download', [OperationsController::class, 'downloadExpenseAttachment']);
+        Route::get('/expenses', [OperationsController::class, 'expenses'])->middleware('permission:expenses.manage,expenses.validate');
+        Route::get('/expenses-export', [OperationsController::class, 'exportExpenses'])->middleware('permission:expenses.manage,expenses.validate');
+        Route::post('/expenses', [OperationsController::class, 'storeExpense'])->middleware('permission:expenses.manage');
+        Route::put('/expenses/{expense}', [OperationsController::class, 'updateExpense'])->middleware('permission:expenses.manage');
+        Route::put('/expenses/{expense}/validate', [OperationsController::class, 'validateExpense'])->middleware('permission:expenses.validate');
+        Route::post('/expenses/{expense}/attachments', [OperationsController::class, 'addExpenseAttachment'])->middleware('permission:expenses.manage');
+        Route::get('/expense-attachments/{attachment}/download', [OperationsController::class, 'downloadExpenseAttachment'])->middleware('permission:expenses.manage,expenses.validate');
 
         // Reporting & Archivage des rapports
-        Route::get('/reports', [ReportController::class, 'index']);
-        Route::post('/reports/generate', [ReportController::class, 'generate']);
-        Route::get('/reports/saved/{savedReport}', [ReportController::class, 'showSaved']);
-        Route::get('/reports-export', [ReportController::class, 'export']);
+        Route::get('/reports', [ReportController::class, 'index'])->middleware('permission:reports.view');
+        Route::post('/reports/generate', [ReportController::class, 'generate'])->middleware('permission:reports.view');
+        Route::get('/reports/saved/{savedReport}', [ReportController::class, 'showSaved'])->middleware('permission:reports.view');
+        Route::get('/reports-export', [ReportController::class, 'export'])->middleware('permission:reports.view');
 
         // Documents administratifs
-        Route::get('/documents', [DocumentController::class, 'index']);
-        Route::post('/documents', [DocumentController::class, 'store']);
-        Route::delete('/documents/{document}', [DocumentController::class, 'destroy']);
+        Route::get('/documents', [DocumentController::class, 'index'])->middleware('permission:documents.manage');
+        Route::post('/documents', [DocumentController::class, 'store'])->middleware('permission:documents.manage');
+        Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->middleware('permission:documents.manage');
     });
 
     // Administration Générale (Administrateur uniquement)

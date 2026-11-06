@@ -21,4 +21,3 @@ class RequestCategory extends Model
         ];
     }
 }
-

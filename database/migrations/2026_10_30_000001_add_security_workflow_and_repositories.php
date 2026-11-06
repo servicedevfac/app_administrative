@@ -15,7 +15,7 @@ return new class extends Migration
         });
 
         Schema::table('material_requests', function (Blueprint $table) {
-            $table->string('status', 50)->default('En attente')->change();
+            $table->string('status', 50)->default('Soumise')->change();
             $table->timestamp('submitted_at')->nullable()->after('approved_at');
             $table->timestamp('closed_at')->nullable()->after('delivered_at');
             $table->text('correction_reason')->nullable()->after('rejection_reason');

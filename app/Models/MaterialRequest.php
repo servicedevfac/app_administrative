@@ -11,47 +11,29 @@ class MaterialRequest extends Model
 {
     use HasFactory;
 
-    public const STATUS_DRAFT = 'Brouillon';
-
-    public const STATUS_PENDING = 'En attente';
-
     public const STATUS_SUBMITTED = 'Soumise';
-
-    public const STATUS_PENDING_VERIFICATION = 'En attente de vérification';
 
     public const STATUS_PENDING_VALIDATION = 'En attente de validation';
 
-    public const STATUS_CORRECTION = 'À corriger';
-
     public const STATUS_VALIDATED = 'Validée';
-
-    public const STATUS_APPROVED = 'Approuvée';
-
-    public const STATUS_EXECUTING = "En cours d'exécution";
-
-    public const STATUS_PENDING_SUPPLY = "En attente d'approvisionnement";
-
-    public const STATUS_EXECUTED = 'Exécutée';
-
-    public const STATUS_PENDING_JUSTIFICATION = 'En attente de justification';
 
     public const STATUS_REJECTED = 'Rejetée';
 
-    public const STATUS_DELIVERED = 'Livrée';
-
-    public const STATUS_RETURNED = 'Restituée';
-
-    public const STATUS_CLOSED = 'Clôturée';
-
-    public const STATUS_CANCELLED = 'Annulée';
+    /**
+     * @var list<string>
+     */
+    public const STATUSES = [
+        self::STATUS_SUBMITTED,
+        self::STATUS_PENDING_VALIDATION,
+        self::STATUS_REJECTED,
+        self::STATUS_VALIDATED,
+    ];
 
     /**
      * @var list<string>
      */
     public const PENDING_WORKFLOW_STATUSES = [
-        self::STATUS_PENDING,
         self::STATUS_SUBMITTED,
-        self::STATUS_PENDING_VERIFICATION,
         self::STATUS_PENDING_VALIDATION,
     ];
 
@@ -60,24 +42,14 @@ class MaterialRequest extends Model
      */
     public const AUTHORIZED_STATUSES = [
         self::STATUS_VALIDATED,
-        self::STATUS_APPROVED,
-        self::STATUS_EXECUTING,
-        'En cours d’exécution',
-        self::STATUS_PENDING_SUPPLY,
-        'En attente d’approvisionnement',
-        self::STATUS_EXECUTED,
-        self::STATUS_PENDING_JUSTIFICATION,
-        self::STATUS_DELIVERED,
     ];
 
     /**
      * @var list<string>
      */
     public const TERMINAL_STATUSES = [
-        self::STATUS_CLOSED,
-        self::STATUS_CANCELLED,
         self::STATUS_REJECTED,
-        self::STATUS_RETURNED,
+        self::STATUS_VALIDATED,
     ];
 
     protected $fillable = [
@@ -108,11 +80,6 @@ class MaterialRequest extends Model
         'cancellation_reason',
     ];
 
-    protected $appends = [
-        'is_overdue',
-        'days_overdue',
-    ];
-
     protected $casts = [
         'date_needed' => 'date',
         'date_return' => 'date',
@@ -125,22 +92,13 @@ class MaterialRequest extends Model
         'closed_at' => 'datetime',
     ];
 
-    public function getIsOverdueAttribute(): bool
+    protected static function booted(): void
     {
-        if (in_array($this->status, array_merge(self::TERMINAL_STATUSES, [self::STATUS_DRAFT, self::STATUS_EXECUTED]), true)) {
-            return false;
-        }
-
-        return $this->date_needed !== null && $this->date_needed->lt(today());
-    }
-
-    public function getDaysOverdueAttribute(): int
-    {
-        if (! $this->is_overdue || $this->date_needed === null) {
-            return 0;
-        }
-
-        return (int) $this->date_needed->diffInDays(today());
+        static::saving(function (self $materialRequest): void {
+            if (! in_array($materialRequest->status, self::STATUSES, true)) {
+                throw new \InvalidArgumentException("Statut de demande invalide : {$materialRequest->status}");
+            }
+        });
     }
 
     public function user(): BelongsTo

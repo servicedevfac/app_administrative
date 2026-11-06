@@ -33,7 +33,7 @@ function initDashboardCharts(data = null) {
         labels: labels,
         datasets: [
           {
-            label: 'Approuvées',
+            label: 'Validées',
             data: approvedData,
             backgroundColor: '#2563eb', // Bleu corporate
             borderRadius: 4,
@@ -41,7 +41,7 @@ function initDashboardCharts(data = null) {
             categoryPercentage: 0.65
           },
           {
-            label: 'En attente',
+            label: 'Soumises / En attente de validation',
             data: pendingData,
             backgroundColor: '#0d9488', // Teal
             borderRadius: 4,

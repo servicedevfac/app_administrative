@@ -180,18 +180,17 @@ class CompleteSpecificationModulesTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.assigned_to', $agent->id);
 
-        // Étape 4 : Suivi d'exécution -> En cours d'exécution -> Exécutée
+        // Étape 4 : les actions d'exécution sont historisées sans créer de nouveau statut.
         $this->withHeaders($this->authorizationHeaders($agent))
             ->putJson("/api/requests/{$reqId}/execution-status", [
-                'status' => MaterialRequest::STATUS_EXECUTING,
                 'comment' => 'Préparation du colis.',
             ])->assertOk()
-            ->assertJsonPath('data.status', MaterialRequest::STATUS_EXECUTING);
+            ->assertJsonPath('data.status', MaterialRequest::STATUS_VALIDATED);
 
         $this->withHeaders($this->authorizationHeaders($agent))
             ->putJson("/api/requests/{$reqId}/deliver")
             ->assertOk()
-            ->assertJsonPath('data.status', MaterialRequest::STATUS_EXECUTED);
+            ->assertJsonPath('data.status', MaterialRequest::STATUS_VALIDATED);
 
         // Étape 5 : Confirmation de réception par le demandeur
         $this->withHeaders($this->authorizationHeaders($employee))
@@ -202,7 +201,11 @@ class CompleteSpecificationModulesTest extends TestCase
         $this->withHeaders($this->authorizationHeaders($manager))
             ->putJson("/api/requests/{$reqId}/close", ['comment' => 'Dossier complet et archivé.'])
             ->assertOk()
-            ->assertJsonPath('data.status', MaterialRequest::STATUS_CLOSED);
+            ->assertJsonPath('data.status', MaterialRequest::STATUS_VALIDATED);
+
+        $this->assertEmpty(
+            MaterialRequest::query()->whereNotIn('status', MaterialRequest::STATUSES)->pluck('status')->all()
+        );
 
         // Demande hors stock (Prestations de services) sans article_id
         $serviceReq = $this->withHeaders($this->authorizationHeaders($employee))->postJson('/api/requests', [
@@ -536,10 +539,10 @@ class CompleteSpecificationModulesTest extends TestCase
         $this->assertTrue($delegate->has_active_delegation);
         $this->assertTrue($delegate->canManageOperations());
 
-        // Le délégataire peut consulter la vue manager /api/reports
+        // Une délégation de validation n'ouvre pas les autres modules de gestion.
         $this->withHeaders($this->authorizationHeaders($delegate))
             ->getJson('/api/reports')
-            ->assertOk();
+            ->assertForbidden();
 
         // Module 9 : Journal d'audit filtré + Sauvegarde (BKP-YYYY-xxxxx) & Restauration des données
         $this->app['auth']->forgetGuards();
@@ -560,5 +563,14 @@ class CompleteSpecificationModulesTest extends TestCase
             ->postJson('/api/backups/restore', ['backup_id' => $backupId])
             ->assertOk()
             ->assertJsonPath('success', true);
+
+        // Sauvegarde régulière planifiée, exécutable sans session utilisateur.
+        $this->artisan('backup:data')->assertSuccessful();
+        $automaticBackup = SystemBackup::whereNull('created_by')->latest()->firstOrFail();
+        Storage::disk('local')->assertExists($automaticBackup->file_path);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'backup.created_automatically',
+            'subject_id' => $automaticBackup->id,
+        ]);
     }
 }

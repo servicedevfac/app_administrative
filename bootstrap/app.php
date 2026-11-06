@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureUserCanManageOperations;
+use App\Http\Middleware\EnsureUserHasAnyPermission;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -18,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
             'manager' => EnsureUserCanManageOperations::class,
+            'permission' => EnsureUserHasAnyPermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

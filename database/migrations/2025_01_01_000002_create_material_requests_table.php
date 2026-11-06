@@ -21,7 +21,7 @@ return new class extends Migration
             $table->date('date_needed')->nullable();
             $table->date('date_return')->nullable(); // restitution si emprunt
             $table->enum('urgency', ['Normale', 'Urgente', 'Planifiée'])->default('Normale');
-            $table->enum('status', ['En attente', 'Approuvée', 'Rejetée', 'Restituée'])->default('En attente');
+            $table->enum('status', ['Soumise', 'En attente de validation', 'Rejetée', 'Validée'])->default('Soumise');
             $table->text('notes')->nullable();
             $table->text('rejection_reason')->nullable();
             $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();

@@ -135,7 +135,7 @@ class ReportController extends Controller
             fputcsv($output, [], ';');
 
             fputcsv($output, ['DÉTAIL DES DEMANDES DE LA PÉRIODE'], ';');
-            fputcsv($output, ['Référence', 'Date', 'Demandeur', 'Service', 'Catégorie', 'Motif', 'Urgence', 'Agent affecté', 'Statut', 'En retard'], ';');
+            fputcsv($output, ['Référence', 'Date', 'Demandeur', 'Service', 'Catégorie', 'Motif', 'Urgence', 'Agent affecté', 'Statut'], ';');
             foreach ($rows as $row) {
                 fputcsv($output, [
                     $row->reference,
@@ -147,7 +147,6 @@ class ReportController extends Controller
                     $row->urgency,
                     $row->assignee?->name ?? '-',
                     $row->status,
-                    $row->is_overdue ? 'Oui' : 'Non',
                 ], ';');
             }
             fclose($output);
@@ -203,7 +202,7 @@ class ReportController extends Controller
             'totals' => [
                 'requests' => $currReqCount,
                 'pending_validation' => (clone $requests)->whereIn('status', MaterialRequest::PENDING_WORKFLOW_STATUSES)->count(),
-                'validated' => (clone $requests)->whereIn('status', array_merge(MaterialRequest::AUTHORIZED_STATUSES, [MaterialRequest::STATUS_CLOSED]))->count(),
+                'validated' => (clone $requests)->where('status', MaterialRequest::STATUS_VALIDATED)->count(),
                 'rejected' => (clone $requests)->where('status', MaterialRequest::STATUS_REJECTED)->count(),
             ],
             'comparison' => [
@@ -248,12 +247,6 @@ class ReportController extends Controller
                 'maintenance' => $vehicles->whereIn('status', ['Maintenance', 'Immobilisé'])->count(),
                 'alerts' => $vehicles->filter(fn (Vehicle $v): bool => $v->has_alert)->count(),
             ],
-            'late_requests' => (clone $requests)
-                ->whereNotIn('status', array_merge(MaterialRequest::TERMINAL_STATUSES, [MaterialRequest::STATUS_DRAFT, MaterialRequest::STATUS_EXECUTED]))
-                ->whereDate('date_needed', '<', today())
-                ->with('user:id,name,service')
-                ->latest()
-                ->get(),
         ];
     }
 

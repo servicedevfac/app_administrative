@@ -9,6 +9,7 @@ const AppState = {
   currentRole: 'collaborator', // 'collaborator' | 'admin' (accès opérationnel)
   isSuperAdmin: false,         // true uniquement pour role === 'admin'
   canManageOps: false,         // true pour admin, manager ou délégataire actif
+  permissions: [],
   currentUser: null,
   selectedArticlesForRequest: {},
   editingRequestRef: null,
@@ -79,25 +80,17 @@ const DEFAULT_ROLE_PERMISSIONS = {
   collaborator: ['requests.create', 'stock.view']
 };
 
+function hasAnyPermission(...permissions) {
+  if (AppState.isSuperAdmin) return true;
+  return permissions.some(permission => AppState.permissions.includes(permission));
+}
+
 const PENDING_REQUEST_STATUSES = [
-  'En attente',
   'Soumise',
-  'En attente de vérification',
   'En attente de validation'
 ];
 
-const AUTHORIZED_REQUEST_STATUSES = [
-  'Validée',
-  'Approuvée',
-  'En cours d\'exécution',
-  'En cours d’exécution',
-  'En attente d\'approvisionnement',
-  'Exécutée',
-  'Livrée',
-  'En attente de justification',
-  'Restituée',
-  'Clôturée'
-];
+const AUTHORIZED_REQUEST_STATUSES = ['Validée'];
 
 function escHtml(value) {
   if (value === null || value === undefined) return '';
@@ -107,6 +100,13 @@ function escHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function compactRequestReference(reference) {
+  const value = String(reference || '');
+  const sequence = value.match(/(\d{5})$/)?.[1];
+
+  return sequence ? `#${sequence}` : value;
 }
 
 function formatCurrency(value, currencyLabel = null) {
@@ -128,21 +128,135 @@ function formatDateTime(value, fallback = '—') {
   return parsed.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+const writeActivity = {
+  pending: 0,
+  visibleSince: 0,
+  hideTimer: null,
+  minimumVisibleMs: 450,
+  controls: new WeakMap()
+};
+
+function resolveWriteControl() {
+  const activeElement = document.activeElement;
+  if (activeElement?.matches?.('button, input[type="submit"]')) return activeElement;
+
+  const activeForm = activeElement?.closest?.('form');
+  return activeForm?.querySelector('button[type="submit"], input[type="submit"]') || null;
+}
+
+function writeActionLabel(method, control) {
+  const text = `${control?.textContent || control?.value || ''}`.trim().toLocaleLowerCase('fr-FR');
+  if (text.includes('connect')) return 'Connexion en cours…';
+  if (text.includes('valid')) return 'Validation en cours…';
+  if (text.includes('restaur')) return 'Restauration en cours…';
+  if (text.includes('génér')) return 'Génération en cours…';
+  if (text.includes('archiv')) return 'Archivage en cours…';
+  if (text.includes('supprim') || method === 'DELETE') return 'Suppression en cours…';
+  return 'Enregistrement en cours…';
+}
+
+function setWriteControlBusy(control, label) {
+  if (!control) return;
+
+  const currentState = writeActivity.controls.get(control);
+  if (currentState) {
+    currentState.pending += 1;
+    return;
+  }
+
+  const state = {
+    pending: 1,
+    disabled: control.disabled,
+    minWidth: control.style.minWidth,
+    html: control instanceof HTMLButtonElement ? control.innerHTML : null,
+    value: control instanceof HTMLInputElement ? control.value : null
+  };
+  writeActivity.controls.set(control, state);
+
+  const width = control.getBoundingClientRect().width;
+  if (width > 0) control.style.minWidth = `${Math.ceil(width)}px`;
+  control.disabled = true;
+  control.classList.add('is-submitting');
+  control.setAttribute('aria-busy', 'true');
+
+  if (control instanceof HTMLButtonElement) {
+    control.innerHTML = `<span class="button-loading-spinner" aria-hidden="true"></span><span>${escHtml(label.replace(' en cours…', '…'))}</span>`;
+  } else if (control instanceof HTMLInputElement) {
+    control.value = label.replace(' en cours…', '…');
+  }
+}
+
+function releaseWriteControl(control) {
+  if (!control) return;
+  const state = writeActivity.controls.get(control);
+  if (!state) return;
+
+  state.pending -= 1;
+  if (state.pending > 0) return;
+
+  control.disabled = state.disabled;
+  control.style.minWidth = state.minWidth;
+  control.classList.remove('is-submitting');
+  control.removeAttribute('aria-busy');
+  if (control instanceof HTMLButtonElement && state.html !== null) control.innerHTML = state.html;
+  if (control instanceof HTMLInputElement && state.value !== null) control.value = state.value;
+  writeActivity.controls.delete(control);
+}
+
+function beginWriteActivity(method) {
+  const control = resolveWriteControl();
+  const label = writeActionLabel(method, control);
+  const indicator = document.getElementById('globalSavingIndicator');
+  const indicatorLabel = document.getElementById('globalSavingIndicatorLabel');
+
+  writeActivity.pending += 1;
+  window.clearTimeout(writeActivity.hideTimer);
+  if (writeActivity.pending === 1) writeActivity.visibleSince = Date.now();
+  if (indicatorLabel) indicatorLabel.textContent = label;
+  if (indicator) {
+    indicator.classList.add('is-visible');
+    indicator.setAttribute('aria-hidden', 'false');
+  }
+  setWriteControlBusy(control, label);
+
+  return control;
+}
+
+function endWriteActivity(control) {
+  releaseWriteControl(control);
+  writeActivity.pending = Math.max(0, writeActivity.pending - 1);
+  if (writeActivity.pending > 0) return;
+
+  const elapsed = Date.now() - writeActivity.visibleSince;
+  const remaining = Math.max(0, writeActivity.minimumVisibleMs - elapsed);
+  writeActivity.hideTimer = window.setTimeout(() => {
+    if (writeActivity.pending > 0) return;
+    const indicator = document.getElementById('globalSavingIndicator');
+    indicator?.classList.remove('is-visible');
+    indicator?.setAttribute('aria-hidden', 'true');
+  }, remaining);
+}
+
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, options = {}) => {
   const requestUrl = typeof input === 'string' ? input : input.url;
   const isApiRequest = requestUrl.startsWith('/api/') || requestUrl.startsWith(`${window.location.origin}/api/`);
   const token = sessionStorage.getItem('gestion_token');
-
-  if (!isApiRequest || !token) return nativeFetch(input, options);
-
+  const method = `${options.method || (typeof input !== 'string' ? input.method : 'GET') || 'GET'}`.toUpperCase();
+  const isWriteRequest = isApiRequest && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
   const headers = new Headers(options.headers || (typeof input !== 'string' ? input.headers : undefined));
-  headers.set('Authorization', `Bearer ${token}`);
-  if (!headers.has('Accept')) {
+  if (isApiRequest && token) headers.set('Authorization', `Bearer ${token}`);
+  if (isApiRequest && !headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }
 
-  return nativeFetch(input, { ...options, headers });
+  if (!isApiRequest) return nativeFetch(input, options);
+
+  const control = isWriteRequest ? beginWriteActivity(method) : null;
+  return nativeFetch(input, { ...options, headers })
+    .finally(() => {
+      if (isWriteRequest) endWriteActivity(control);
+    });
 };
 
 window.downloadAuthenticatedFile = async (url, fallbackName = 'export.csv') => {
@@ -247,7 +361,17 @@ function applyUser(user) {
   const isSuperAdmin = normalizedRole === 'admin' || normalizedRole === 'administrateur';
   const isManager = normalizedRole === 'manager' || normalizedRole === 'responsable';
   const hasDelegation = Boolean(user.has_active_delegation);
-  const canManageOps = isSuperAdmin || isManager || hasDelegation;
+  const rolePermissions = DEFAULT_ROLE_PERMISSIONS[user.role] || DEFAULT_ROLE_PERMISSIONS[normalizedRole] || [];
+  AppState.permissions = isSuperAdmin
+    ? PERMISSION_CATALOG.map(permission => permission.key)
+    : [...new Set(user.effective_permissions || user.permissions || rolePermissions)];
+  const operationalPermissions = [
+    'requests.verify', 'requests.validate', 'requests.assign', 'requests.execute',
+    'stock.manage', 'inventory.manage', 'inventory.validate', 'assets.manage',
+    'vehicles.manage', 'expenses.manage', 'expenses.validate', 'reports.view',
+    'documents.manage'
+  ];
+  const canManageOps = isSuperAdmin || operationalPermissions.some(permission => AppState.permissions.includes(permission));
 
   AppState.isSuperAdmin = isSuperAdmin;
   AppState.canManageOps = canManageOps;
@@ -338,6 +462,22 @@ function applyRoleVisibility(role = AppState.currentRole) {
   document.querySelectorAll('.collaborator-only-feature').forEach(el => {
     el.style.setProperty('display', !isOps ? '' : 'none', 'important');
   });
+
+  document.querySelectorAll('[data-permission]').forEach(el => {
+    const requiredPermissions = (el.dataset.permission || '').split(',').map(value => value.trim()).filter(Boolean);
+    const isAllowed = requiredPermissions.length > 0 && hasAnyPermission(...requiredPermissions);
+    el.style.setProperty('display', isAllowed ? '' : 'none', 'important');
+  });
+
+  const availableOperationTabs = [...document.querySelectorAll('[data-operations-tab]')]
+    .filter(button => button.style.display !== 'none');
+  if (availableOperationTabs.length > 0) {
+    const activeTab = availableOperationTabs.find(button => button.classList.contains('active')) || availableOperationTabs[0];
+    document.querySelectorAll('[data-operations-tab]').forEach(button => button.classList.toggle('active', button === activeTab));
+    document.querySelectorAll('.operations-tab-pane').forEach(pane => {
+      pane.style.display = pane.id === `operationsPane-${activeTab.dataset.operationsTab}` ? 'block' : 'none';
+    });
+  }
 }
 
 function setupNavigation() {
@@ -512,31 +652,20 @@ function updateCollaboratorLiveTracker() {
   [b1, b2, b3, b4].forEach(b => { if (b) b.className = 'request-progress-bar'; });
 
   const st = latest.status;
-  if (st === 'Brouillon') {
-    if (b1) b1.className = 'request-progress-bar active';
-    if (badgeEl) { badgeEl.className = 'badge bg-secondary-subtle text-secondary border'; badgeEl.textContent = 'Brouillon non soumis'; }
-  } else if (PENDING_REQUEST_STATUSES.includes(st) || st === 'À corriger') {
+  if (PENDING_REQUEST_STATUSES.includes(st)) {
     if (b1) b1.className = 'request-progress-bar done';
     if (b2) b2.className = 'request-progress-bar active';
     if (badgeEl) {
       badgeEl.className = 'badge bg-warning-subtle text-warning-emphasis border';
-      badgeEl.textContent = st === 'À corriger' ? 'Complément attendu' : st;
+      badgeEl.textContent = st;
     }
-  } else if (['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution', 'En attente d\'approvisionnement'].includes(st)) {
-    if (b1) b1.className = 'request-progress-bar done';
-    if (b2) b2.className = 'request-progress-bar done';
-    if (b3) b3.className = 'request-progress-bar active';
-    if (badgeEl) {
-      badgeEl.className = 'badge bg-info-subtle text-info-emphasis border';
-      badgeEl.textContent = `${st} • Traitement en cours`;
-    }
-  } else if (['Exécutée', 'Livrée', 'En attente de justification', 'Restituée', 'Clôturée'].includes(st)) {
+  } else if (st === 'Validée') {
     [b1, b2, b3, b4].forEach(b => { if (b) b.className = 'request-progress-bar done'; });
     if (badgeEl) {
       badgeEl.className = 'badge bg-success-subtle text-success border';
       badgeEl.textContent = st;
     }
-  } else if (['Rejetée', 'Annulée'].includes(st)) {
+  } else if (st === 'Rejetée') {
     if (b1) b1.className = 'request-progress-bar done';
     if (badgeEl) {
       badgeEl.className = 'badge bg-danger-subtle text-danger border';
@@ -582,6 +711,13 @@ window.startEditRequest = async function (reference) {
   }
   if (!req) {
     showToast('Demande introuvable pour modification.', 'warning');
+    return;
+  }
+
+  const isOwner = AppState.currentUser && Number(req.user_id) === Number(AppState.currentUser.id);
+  const isCollaborator = AppState.currentUser?.role === 'collaborator';
+  if (!isOwner || !isCollaborator || !PENDING_REQUEST_STATUSES.includes(req.status)) {
+    showToast('Seul le collaborateur demandeur peut modifier cette demande.', 'danger');
     return;
   }
 
@@ -658,7 +794,6 @@ function setupStepper() {
   const btnPrev2 = document.getElementById('btnStep2Prev');
   const btnNext2 = document.getElementById('btnStep2Next');
   const btnPrev3 = document.getElementById('btnStep3Prev');
-  const btnSaveDraft = document.getElementById('btnSaveDraftRequest');
   const btnSubmit = document.getElementById('btnSubmitRequest');
   const checkNonStock = document.getElementById('checkNonStockRequest');
   const nonStockWrapper = document.getElementById('nonStockDescriptionWrapper');
@@ -723,13 +858,12 @@ function setupStepper() {
 
   btnPrev3?.addEventListener('click', () => goToStep(2));
 
-  btnSaveDraft?.addEventListener('click', () => submitOrSaveRequest(true));
-  btnSubmit?.addEventListener('click', () => submitOrSaveRequest(false));
+  btnSubmit?.addEventListener('click', submitRequest);
 
   document.querySelectorAll('.selectable-article-row').forEach(bindSelectableArticleRow);
 }
 
-async function submitOrSaveRequest(saveAsDraft = false) {
+async function submitRequest() {
   const selectedKeys = Object.keys(AppState.selectedArticlesForRequest);
   const isNonStock = Boolean(document.getElementById('checkNonStockRequest')?.checked);
   const nonStockDesc = document.getElementById('inputNonStockDescription')?.value.trim() || '';
@@ -759,9 +893,7 @@ async function submitOrSaveRequest(saveAsDraft = false) {
   }));
 
   const btnSubmit = document.getElementById('btnSubmitRequest');
-  const btnDraft = document.getElementById('btnSaveDraftRequest');
   if (btnSubmit) btnSubmit.disabled = true;
-  if (btnDraft) btnDraft.disabled = true;
 
   try {
     if (AppState.editingRequestRef) {
@@ -777,8 +909,7 @@ async function submitOrSaveRequest(saveAsDraft = false) {
           date_needed: dateNeeded,
           urgency,
           notes: notes || null,
-          items,
-          submit_now: !saveAsDraft
+          items
         })
       });
       const updateResult = await updateRes.json();
@@ -796,7 +927,7 @@ async function submitOrSaveRequest(saveAsDraft = false) {
         }
       }
 
-      showToast(saveAsDraft ? `Brouillon ${editRef} mis à jour.` : `Demande ${editRef} mise à jour et soumise !`, 'success');
+      showToast(`Demande ${editRef} mise à jour !`, 'success');
       resetNewRequestForm();
       await BackendApi.refreshAll({ showIndicator: true, silent: true });
       openRequestDetail(editRef);
@@ -814,8 +945,6 @@ async function submitOrSaveRequest(saveAsDraft = false) {
     payload.append('date_needed', dateNeeded);
     payload.append('urgency', urgency);
     if (notes) payload.append('notes', notes);
-    if (saveAsDraft) payload.append('save_as_draft', '1');
-
     items.forEach((item, index) => {
       payload.append(`items[${index}][article_id]`, item.article_id);
       payload.append(`items[${index}][quantity]`, item.quantity);
@@ -842,7 +971,6 @@ async function submitOrSaveRequest(saveAsDraft = false) {
     showToast('Impossible d’enregistrer la demande pour le moment. Veuillez réessayer.', 'danger');
   } finally {
     if (btnSubmit) btnSubmit.disabled = false;
-    if (btnDraft) btnDraft.disabled = false;
   }
 }
 
@@ -1046,23 +1174,9 @@ function setupDetailTabs() {
 function requestStatusBadge(status) {
   const classes = {
     'Validée': 'badge-approved',
-    'Approuvée': 'badge-approved',
-    'Exécutée': 'badge-approved',
-    'Livrée': 'badge-approved',
-    'Restituée': 'badge-approved',
-    'Clôturée': 'badge-approved',
-    'En cours d\'exécution': 'badge-info-status',
-    'En cours d’exécution': 'badge-info-status',
-    'En attente d\'approvisionnement': 'badge-pending',
-    'En attente de justification': 'badge-pending',
     'Soumise': 'badge-pending',
-    'En attente de vérification': 'badge-pending',
     'En attente de validation': 'badge-pending',
-    'En attente': 'badge-pending',
-    'Brouillon': 'badge-pending',
-    'À corriger': 'badge-rejected',
-    'Rejetée': 'badge-rejected',
-    'Annulée': 'badge-rejected'
+    'Rejetée': 'badge-rejected'
   };
   const badgeClass = classes[status] || 'badge-pending';
   return `<span class="badge-status ${badgeClass}"><span class="badge-status-dot"></span> ${escHtml(status || 'Soumise')}</span>`;
@@ -1107,9 +1221,6 @@ async function openRequestDetail(reference) {
     urgBadge.textContent = `Urgence : ${req.urgency || 'Normale'}`;
   }
 
-  const overdueBadge = document.getElementById('detailOverdueBadge');
-  if (overdueBadge) overdueBadge.style.display = req.is_overdue ? 'inline-block' : 'none';
-
   const dName = req.user?.name || 'Demandeur';
   const dService = req.service || 'Service Général';
   const createdDate = formatDateTime(req.created_at, 'Récemment');
@@ -1128,12 +1239,12 @@ async function openRequestDetail(reference) {
       reasonAlert.style.display = 'block';
       reasonTitle.textContent = 'Motif du rejet :';
       reasonBody.textContent = req.rejection_reason;
-    } else if (req.status === 'À corriger' && req.correction_reason) {
+    } else if (req.correction_reason) {
       reasonAlert.className = 'alert alert-warning mb-3';
       reasonAlert.style.display = 'block';
       reasonTitle.textContent = 'Complément d’information demandé :';
       reasonBody.textContent = req.correction_reason;
-    } else if (req.status === 'Annulée' && req.cancellation_reason) {
+    } else if (req.status === 'Rejetée' && req.cancellation_reason) {
       reasonAlert.className = 'alert alert-secondary mb-3';
       reasonAlert.style.display = 'block';
       reasonTitle.textContent = 'Motif de l’annulation :';
@@ -1173,12 +1284,12 @@ async function openRequestDetail(reference) {
       if (title2) { title2.className = 'timeline-title'; title2.textContent = 'Vérification & Validation effectuées'; }
       if (time2) time2.textContent = req.approver?.name ? `Validée par ${req.approver.name}` : 'Validée par la hiérarchie';
 
-      const isDone = ['Exécutée', 'Livrée', 'Restituée', 'Clôturée'].includes(req.status);
+      const isDone = Boolean(req.executed_at || req.delivered_at || req.received_at || req.closed_at);
       timeStep3.className = isDone ? 'timeline-step done' : 'timeline-step current';
       if (marker3) marker3.innerHTML = isDone ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-gear"></i>';
-      if (title3) { title3.className = 'timeline-title text-success fw-bold'; title3.textContent = req.status; }
+      if (title3) { title3.className = 'timeline-title text-success fw-bold'; title3.textContent = isDone ? 'Exécution enregistrée' : 'Suivi de l’exécution'; }
       if (time3) time3.textContent = req.assignee?.name ? `Suivi par ${req.assignee.name} • Bon officiel disponible` : 'Bon officiel disponible';
-    } else if (['Annulée', 'Rejetée'].includes(req.status)) {
+    } else if (req.status === 'Rejetée') {
       timeStep2.className = 'timeline-step done';
       if (marker2) marker2.innerHTML = '<i class="bi bi-x-lg"></i>';
       if (title2) { title2.className = 'timeline-title text-danger fw-bold'; title2.textContent = req.status; }
@@ -1187,15 +1298,6 @@ async function openRequestDetail(reference) {
       if (marker3) marker3.innerHTML = '<i class="bi bi-dash"></i>';
       if (title3) { title3.className = 'timeline-title text-muted'; title3.textContent = 'Circuit clôturé'; }
       if (time3) time3.textContent = 'Aucune exécution ni sortie de stock';
-    } else if (req.status === 'À corriger') {
-      timeStep2.className = 'timeline-step current';
-      if (marker2) marker2.innerHTML = '<i class="bi bi-pencil"></i>';
-      if (title2) { title2.className = 'timeline-title text-warning fw-bold'; title2.textContent = 'Complément attendu du demandeur'; }
-      if (time2) time2.textContent = req.correction_reason || 'Veuillez compléter et re-soumettre la demande';
-      timeStep3.className = 'timeline-step';
-      if (marker3) marker3.innerHTML = '3';
-      if (title3) { title3.className = 'timeline-title'; title3.textContent = 'Exécution & Clôture'; }
-      if (time3) time3.textContent = 'En attente de re-soumission';
     } else {
       timeStep2.className = 'timeline-step current';
       if (marker2) marker2.innerHTML = '<i class="bi bi-arrow-repeat"></i>';
@@ -1302,16 +1404,7 @@ async function openRequestDetail(reference) {
   const isOwner = AppState.currentUser && Number(req.user_id) === Number(AppState.currentUser.id);
   const btnEditResubmit = document.getElementById('btnRequesterEditResubmit');
   if (btnEditResubmit) {
-    const editableStatuses = [
-      'Brouillon',
-      'À corriger',
-      'Soumise',
-      'En attente',
-      'En attente de vérification',
-      'En attente de validation',
-      'En attente de justification'
-    ];
-    const canEdit = (isOwner || AppState.isSuperAdmin) && editableStatuses.includes(req.status);
+    const canEdit = isOwner && AppState.currentUser?.role === 'collaborator' && PENDING_REQUEST_STATUSES.includes(req.status);
     btnEditResubmit.style.display = canEdit ? 'inline-flex' : 'none';
     btnEditResubmit.innerHTML = '<i class="bi bi-pencil-square me-1"></i> Modifier la demande';
     btnEditResubmit.onclick = () => window.startEditRequest(req.reference);
@@ -1320,7 +1413,7 @@ async function openRequestDetail(reference) {
   const btnConfirmReceipt = document.getElementById('btnRequesterConfirmReceipt');
   if (btnConfirmReceipt) {
     const canConfirm = (isOwner || AppState.canManageOps)
-      && ['Exécutée', 'Livrée', 'Validée', 'Approuvée', 'En attente de justification'].includes(req.status)
+      && req.status === 'Validée'
       && !req.received_at;
     btnConfirmReceipt.style.display = canConfirm ? 'inline-flex' : 'none';
     btnConfirmReceipt.onclick = async () => {
@@ -1332,27 +1425,24 @@ async function openRequestDetail(reference) {
 
   const btnCancel = document.getElementById('btnCollaboratorCancel');
   if (btnCancel) {
-    const cancellable = ['Brouillon', 'À corriger', ...PENDING_REQUEST_STATUSES].includes(req.status) && (isOwner || AppState.isSuperAdmin);
+    const cancellable = PENDING_REQUEST_STATUSES.includes(req.status) && (isOwner || AppState.isSuperAdmin);
     btnCancel.style.display = cancellable ? 'inline-flex' : 'none';
     btnCancel.onclick = () => openRequestReasonModal('cancel', req.reference);
   }
 
   // Actions Gestionnaire / Responsable
   const isPending = PENDING_REQUEST_STATUSES.includes(req.status);
-  const isApprovable = isPending || req.status === 'En attente d\'approvisionnement';
-  const isAuthorizedActive = ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution', 'En attente d\'approvisionnement', 'En attente de justification'].includes(req.status);
+  const isValidated = req.status === 'Validée';
+  const hasReturned = (req.decisions || []).some(decision => decision.action === 'returned');
   const actionVisibility = {
-    btnActionVerify: isPending && req.status !== 'En attente de validation',
-    btnActionApprove: isApprovable,
+    btnActionVerify: req.status === 'Soumise',
+    btnActionApprove: isPending,
     btnActionCorrection: isPending,
-    btnActionAssign: !['Annulée', 'Rejetée', 'Clôturée', 'Brouillon'].includes(req.status),
-    btnActionExecInProgress: ['Validée', 'Approuvée', 'En attente d\'approvisionnement'].includes(req.status),
-    btnActionExecSupply: isPending || ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution'].includes(req.status),
-    btnActionDeliver: ['Validée', 'Approuvée', 'En cours d\'exécution', 'En cours d’exécution'].includes(req.status),
-    btnActionExecJustification: isAuthorizedActive || ['Exécutée', 'Livrée'].includes(req.status),
-    btnActionReceive: ['Exécutée', 'Livrée', 'Validée', 'Approuvée', 'En attente de justification'].includes(req.status) && !req.received_at,
-    btnActionReturn: req.type_operation === 'Emprunt temporaire' && ['Validée', 'Approuvée', 'Exécutée', 'Livrée'].includes(req.status),
-    btnActionClose: ['Exécutée', 'Livrée', 'Restituée', 'Validée', 'Approuvée'].includes(req.status),
+    btnActionAssign: isValidated,
+    btnActionDeliver: isValidated && !req.delivered_at,
+    btnActionReceive: isValidated && !req.received_at,
+    btnActionReturn: req.type_operation === 'Emprunt temporaire' && isValidated && !hasReturned,
+    btnActionClose: isValidated && !req.closed_at,
     btnActionReject: isPending
   };
 
@@ -1371,7 +1461,6 @@ async function openRequestDetail(reference) {
   const history = document.getElementById('detailRequestHistory');
   if (history) {
     const labels = {
-      draft_saved: 'Brouillon enregistré',
       created: 'Demande créée',
       submitted: 'Demande soumise',
       resubmitted: 'Compléments fournis & Demande re-soumise',
@@ -2498,14 +2587,14 @@ window.exportTableAsPdf = async function(moduleType) {
     const list = AppState.currentRequests || [];
     title = 'Registre des Demandes Internes de Matériel';
     refCode = `DEMANDES-${new Date().toISOString().slice(0, 10)}`;
-    const pending = list.filter(r => !['Validée', 'Exécutée', 'Clôturée', 'Rejetée', 'Annulée'].includes(r.status)).length;
-    const executed = list.filter(r => ['Exécutée', 'Clôturée'].includes(r.status)).length;
+    const pending = list.filter(r => PENDING_REQUEST_STATUSES.includes(r.status)).length;
+    const validated = list.filter(r => r.status === 'Validée').length;
 
     summaryHtml = `
       <div class="row g-3 mb-4">
         <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Total Demandes</small><strong class="fs-5">${list.length}</strong></div></div>
         <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">En Cours / Traitement</small><strong class="fs-5 text-warning">${pending}</strong></div></div>
-        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Exécutées / Clôturées</small><strong class="fs-5 text-success">${executed}</strong></div></div>
+        <div class="col-4"><div class="p-3 border rounded"><small class="text-muted d-block">Validées</small><strong class="fs-5 text-success">${validated}</strong></div></div>
       </div>
     `;
 
@@ -2925,10 +3014,6 @@ window.deleteDocument = async function (docId, docTitle) {
 };
 
 function setupModalsAndActions() {
-  document.getElementById('topbarBtnRefresh')?.addEventListener('click', () => {
-    BackendApi.refreshAll({ showIndicator: true, silent: false });
-  });
-
   document.getElementById('btnMarkAllNotificationsRead')?.addEventListener('click', async (e) => {
     e.stopPropagation();
     await fetch('/api/notifications/read-all', { method: 'PUT' });
@@ -2948,7 +3033,7 @@ function setupModalsAndActions() {
   // Actions détail de demande
   document.getElementById('btnActionVerify')?.addEventListener('click', async () => {
     if (AppState.selectedRequestRef) {
-      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'verify', { status: 'En attente de validation' });
+      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'verify', { next_status: 'En attente de validation' });
     }
   });
   document.getElementById('btnActionApprove')?.addEventListener('click', () => {
@@ -2963,21 +3048,6 @@ function setupModalsAndActions() {
   document.getElementById('btnActionAssign')?.addEventListener('click', () => {
     if (!AppState.selectedRequestRef) return;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAssignRequest')).show();
-  });
-  document.getElementById('btnActionExecInProgress')?.addEventListener('click', async () => {
-    if (AppState.selectedRequestRef) {
-      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En cours d\'exécution' });
-    }
-  });
-  document.getElementById('btnActionExecSupply')?.addEventListener('click', async () => {
-    if (AppState.selectedRequestRef) {
-      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En attente d\'approvisionnement' });
-    }
-  });
-  document.getElementById('btnActionExecJustification')?.addEventListener('click', async () => {
-    if (AppState.selectedRequestRef) {
-      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'execution-status', { status: 'En attente de justification' });
-    }
   });
   document.getElementById('btnActionDeliver')?.addEventListener('click', async () => {
     if (AppState.selectedRequestRef && confirm(`Confirmer l’exécution / la remise pour ${AppState.selectedRequestRef} ?`)) {
@@ -3062,8 +3132,7 @@ function setupModalsAndActions() {
     const st = document.getElementById('filterReqStatus')?.value || '';
     const cat = document.getElementById('filterReqCategory')?.value || '';
     const urg = document.getElementById('filterReqUrgency')?.value || '';
-    if (st && st !== '__OVERDUE__') params.set('status', st);
-    if (st === '__OVERDUE__') params.set('overdue', '1');
+    if (st) params.set('status', st);
     if (cat) params.set('category', cat);
     if (urg) params.set('urgency', urg);
     downloadAuthenticatedFile(`/api/requests-export?${params.toString()}`, 'demandes.csv');
@@ -3365,8 +3434,7 @@ function setupTableFilters() {
     const query = (document.getElementById('searchRequestsInput')?.value || '').toLowerCase();
     document.querySelectorAll('#allRequestsTableBody tr[data-status]').forEach(tr => {
       const rowStatus = tr.getAttribute('data-status') || '';
-      const rowOverdue = tr.getAttribute('data-overdue') === '1';
-      const matchStatus = !status || (status === '__OVERDUE__' ? rowOverdue : rowStatus === status);
+      const matchStatus = !status || rowStatus === status;
       const matchCat = !cat || tr.getAttribute('data-category') === cat;
       const matchUrg = !urg || tr.getAttribute('data-urgency') === urg;
       const matchQuery = !query || tr.innerText.toLowerCase().includes(query);
@@ -3809,7 +3877,7 @@ function populateRelationSelectors(requests = [], articles = [], assignees = [])
     if ([...select.options].some(option => option.value === previousValue)) select.value = previousValue;
   };
 
-  const selectableRequests = requests.filter(r => !['Brouillon', 'Annulée', 'Rejetée'].includes(r.status));
+  const selectableRequests = requests.filter(r => r.status === 'Validée');
   const authorizedRequests = requests.filter(r => AUTHORIZED_REQUEST_STATUSES.includes(r.status));
   fillSelect('expenseRequestSelect', selectableRequests, r => `${r.reference} — ${r.motif} (${r.service})`, 'Sélectionner une demande…');
   fillSelect('mvtRequestId', authorizedRequests, r => `${r.reference} — ${r.user?.name || r.service}`, 'Aucune (Entrée / Transfert / Urgence)');
@@ -4087,9 +4155,6 @@ const BackendApi = {
   async refreshAll(options = { showIndicator: false, silent: false }) {
     if (!this.isOnline || !this.isDbConnected || !sessionStorage.getItem('gestion_token')) return;
 
-    const spinIcon = document.getElementById('iconRefreshSpin');
-    if (spinIcon) spinIcon.classList.add('spin-animation');
-
     try {
       const loads = [
         this.loadCatalogReferences(),
@@ -4100,7 +4165,11 @@ const BackendApi = {
       ];
 
       if (AppState.canManageOps) {
-        loads.push(this.loadMovements(), this.loadDocuments(), this.loadOperations());
+        if (hasAnyPermission('stock.view')) loads.push(this.loadMovements());
+        if (hasAnyPermission('documents.manage')) loads.push(this.loadDocuments());
+        if (hasAnyPermission('assets.manage', 'vehicles.manage', 'expenses.manage', 'expenses.validate', 'inventory.manage', 'inventory.validate', 'reports.view')) {
+          loads.push(this.loadOperations());
+        }
       }
       if (AppState.isSuperAdmin) {
         loads.push(this.loadUsers(), this.loadAdminSettingsAndRefs());
@@ -4118,8 +4187,6 @@ const BackendApi = {
       }
     } catch (e) {
       console.warn('refreshAll error:', e);
-    } finally {
-      if (spinIcon) setTimeout(() => spinIcon.classList.remove('spin-animation'), 600);
     }
   },
 
@@ -4156,24 +4223,22 @@ const BackendApi = {
   async loadOperations() {
     if (!AppState.canManageOps) return;
     try {
+      const canUseOverview = hasAnyPermission('assets.manage', 'vehicles.manage', 'expenses.manage', 'inventory.manage', 'reports.view');
+      const canLoadAssignees = hasAnyPermission('requests.assign', 'assets.manage', 'vehicles.manage', 'expenses.manage');
       const [overviewRes, assetsRes, vehiclesRes, expensesRes, inventoriesRes, assigneesRes] = await Promise.all([
-        fetch(`${this.baseUrl}/operations/overview`),
-        fetch(`${this.baseUrl}/assets`),
-        fetch(`${this.baseUrl}/vehicles`),
-        fetch(`${this.baseUrl}/expenses`),
-        fetch(`${this.baseUrl}/inventories`),
-        fetch(`${this.baseUrl}/operations/assignees`)
+        canUseOverview ? fetch(`${this.baseUrl}/operations/overview`) : null,
+        hasAnyPermission('assets.manage') ? fetch(`${this.baseUrl}/assets`) : null,
+        hasAnyPermission('vehicles.manage') ? fetch(`${this.baseUrl}/vehicles`) : null,
+        hasAnyPermission('expenses.manage', 'expenses.validate') ? fetch(`${this.baseUrl}/expenses`) : null,
+        hasAnyPermission('inventory.manage', 'inventory.validate') ? fetch(`${this.baseUrl}/inventories`) : null,
+        canLoadAssignees ? fetch(`${this.baseUrl}/operations/assignees`) : null
       ]);
-      if ([overviewRes, assetsRes, vehiclesRes, expensesRes, inventoriesRes, assigneesRes].some(r => !r.ok)) return;
-
-      const [overview, assets, vehicles, expenses, inventories, assignees] = await Promise.all([
-        overviewRes.json(), assetsRes.json(), vehiclesRes.json(), expensesRes.json(), inventoriesRes.json(), assigneesRes.json()
-      ]);
+      const responses = [overviewRes, assetsRes, vehiclesRes, expensesRes, inventoriesRes, assigneesRes];
+      const payloads = await Promise.all(responses.map(async response => response?.ok ? response.json() : { data: [] }));
+      const [overview, assets, vehicles, expenses, inventories, assignees] = payloads;
 
       const data = overview.data || {};
       const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
-
-      const overdueCount = (AppState.currentRequests || []).filter(r => r.is_overdue).length;
 
       setText('opsAssetsTotal', data.assets?.total ?? 0);
       setText('opsAssetsAssigned', `${data.assets?.assigned ?? 0} affecté(s)`);
@@ -4186,7 +4251,6 @@ const BackendApi = {
       setText('opsExpenseOverruns', `${data.expenses?.reapproval ?? 0} dépassement(s)`);
       setText('opsInventoryOpen', data.inventory?.open ?? 0);
       setText('opsInventoryVariance', `${data.inventory?.variances ?? 0} écart(s) d’inventaire`);
-      setText('opsOverdueRequests', `${overdueCount} demande(s) en retard`);
 
       // Alertes synthèse
       const alerts = [];
@@ -4194,7 +4258,6 @@ const BackendApi = {
       if (data.expenses?.reapproval) alerts.push(`${data.expenses.reapproval} dépense(s) dépassent le plafond autorisé et nécessitent une revalidation.`);
       if ((data.expenses?.unjustified || 0) > 0) alerts.push(`${formatCurrency(data.expenses.unjustified)} de décaissements en attente de pièces justificatives.`);
       if (data.assets?.unavailable) alerts.push(`${data.assets.unavailable} équipement(s) du patrimoine signalé(s) endommagé(s) ou hors service.`);
-      if (overdueCount > 0) alerts.push(`${overdueCount} demande(s) interne(s) ont dépassé la date souhaitée.`);
 
       const alertBox = document.getElementById('operationsAlerts');
       if (alertBox) {
@@ -4215,7 +4278,7 @@ const BackendApi = {
       this.renderInventoriesTable(AppState.currentInventories);
 
       populateRelationSelectors(AppState.currentRequests || [], AppState.currentArticles || [], AppState.currentAssignees);
-      await this.loadReport();
+      if (hasAnyPermission('reports.view')) await this.loadReport();
     } catch (error) {
       console.warn('loadOperations error:', error);
     }
@@ -4335,8 +4398,8 @@ const BackendApi = {
           <td class="fw-semibold">${formatCurrency(exp.remaining_amount)}</td>
           <td><span class="badge ${isOverrun ? 'bg-danger' : (exp.status === 'Validé' ? 'bg-success-subtle text-success border' : 'bg-warning-subtle text-warning-emphasis border')}">${escHtml(exp.status)}</span></td>
           <td class="text-end text-nowrap">
-            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Suivi montants / Décaisser" onclick="openExpenseModal(${exp.id}, 'edit')"><i class="bi bi-pencil-square"></i></button>
-            <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" title="Contrôler & Valider" onclick="openExpenseModal(${exp.id}, 'validate')"><i class="bi bi-check2-circle"></i></button>
+            ${hasAnyPermission('expenses.manage') ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Suivi montants / Décaisser" onclick="openExpenseModal(${exp.id}, 'edit')"><i class="bi bi-pencil-square"></i></button>` : ''}
+            ${hasAnyPermission('expenses.validate') ? `<button type="button" class="btn btn-sm btn-outline-success py-0 px-2" title="Contrôler & Valider" onclick="openExpenseModal(${exp.id}, 'validate')"><i class="bi bi-check2-circle"></i></button>` : ''}
             <button type="button" class="btn btn-sm btn-light border py-0 px-2" title="Justificatifs & Historique (${exp.attachments?.length || 0})" onclick="openExpenseModal(${exp.id}, 'detail')"><i class="bi bi-paperclip"></i> ${exp.attachments?.length || 0}</button>
           </td>
         </tr>`;
@@ -4364,7 +4427,7 @@ const BackendApi = {
           <td><span class="badge ${isPending ? 'bg-warning text-dark' : 'bg-success'}">${escHtml(inv.status)}</span></td>
           <td class="text-end text-nowrap">
             <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" onclick="openInventoryDetailModal(${inv.id})">Détails</button>
-            ${isPending ? `<button type="button" class="btn btn-sm btn-success py-0 px-2" onclick="validateInventory(${inv.id})">Valider</button>` : ''}
+            ${isPending && hasAnyPermission('inventory.validate') ? `<button type="button" class="btn btn-sm btn-success py-0 px-2" onclick="validateInventory(${inv.id})">Valider</button>` : ''}
           </td>
         </tr>`;
     }).join('');
@@ -4947,7 +5010,7 @@ const BackendApi = {
         supTbody.innerHTML = pending.length
           ? pending.slice(0, 8).map(r => `
             <tr>
-              <td class="fw-semibold text-primary font-monospace">${escHtml(r.reference)}${r.is_overdue ? ' <span class="badge bg-danger ms-1">Retard</span>' : ''}</td>
+              <td class="request-reference text-primary font-monospace" title="${escHtml(r.reference)}">${escHtml(compactRequestReference(r.reference))}</td>
               <td><span class="fw-medium text-dark">${escHtml(r.user?.name || 'Collaborateur')}</span> <small class="text-muted">(${escHtml(r.service)})</small></td>
               <td class="small"><strong>${escHtml(r.category || '')}</strong><div class="text-muted">${escHtml(r.motif)}</div></td>
               <td>${requestStatusBadge(r.status)}</td>
@@ -4968,13 +5031,13 @@ const BackendApi = {
         collabTbody.innerHTML = myReqs.length
           ? myReqs.slice(0, 6).map(r => `
             <tr>
-              <td class="fw-semibold text-primary font-monospace">${escHtml(r.reference)}</td>
+              <td class="request-reference text-primary font-monospace" title="${escHtml(r.reference)}">${escHtml(compactRequestReference(r.reference))}</td>
               <td>${formatDateShort(r.created_at)}</td>
               <td class="small"><strong>${escHtml(r.motif)}</strong><div class="text-muted">${escHtml(r.category || '')}</div></td>
               <td>${requestStatusBadge(r.status)}</td>
               <td class="text-end text-nowrap">
                 ${AUTHORIZED_REQUEST_STATUSES.includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="openPdfModal('${escHtml(r.reference)}')">Bon PDF</button>` : ''}
-                ${['Brouillon', 'À corriger', 'Soumise', 'En attente', 'En attente de vérification', 'En attente de validation', 'En attente de justification'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
+                ${AppState.currentUser?.role === 'collaborator' && PENDING_REQUEST_STATUSES.includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
                 <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="openRequestDetail('${escHtml(r.reference)}')">Suivre</button>
               </td>
             </tr>`).join('')
@@ -4986,11 +5049,8 @@ const BackendApi = {
       if (allTbody) {
         allTbody.innerHTML = requests.length
           ? requests.map(r => `
-            <tr data-status="${escHtml(r.status)}" data-category="${escHtml(r.category || '')}" data-urgency="${escHtml(r.urgency || 'Normale')}" data-overdue="${r.is_overdue ? '1' : '0'}">
-              <td class="fw-bold text-primary font-monospace">
-                ${escHtml(r.reference)}
-                ${r.is_overdue ? '<span class="badge bg-danger ms-1" title="Échéance dépassée">Retard</span>' : ''}
-              </td>
+            <tr data-status="${escHtml(r.status)}" data-category="${escHtml(r.category || '')}" data-urgency="${escHtml(r.urgency || 'Normale')}">
+              <td class="request-reference text-primary font-monospace" title="${escHtml(r.reference)}">${escHtml(compactRequestReference(r.reference))}</td>
               <td>
                 <div class="fw-medium text-dark">${escHtml(r.user?.name || 'Collaborateur')}</div>
                 <small class="text-muted">${escHtml(r.service || '')}</small>
@@ -5005,7 +5065,7 @@ const BackendApi = {
               <td class="small">${escHtml(r.assignee?.name || '—')}</td>
               <td>${requestStatusBadge(r.status)}</td>
               <td class="text-end text-nowrap">
-                ${((AppState.currentUser && Number(r.user_id) === Number(AppState.currentUser.id)) || AppState.isSuperAdmin) && ['Brouillon', 'À corriger', 'Soumise', 'En attente', 'En attente de vérification', 'En attente de validation', 'En attente de justification'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
+                ${AppState.currentUser?.role === 'collaborator' && AppState.currentUser && Number(r.user_id) === Number(AppState.currentUser.id) && PENDING_REQUEST_STATUSES.includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" type="button" onclick="startEditRequest('${escHtml(r.reference)}')"><i class="bi bi-pencil-square"></i> Modifier</button>` : ''}
                 <button class="btn btn-sm btn-outline-primary py-0 px-2" type="button" onclick="openRequestDetail('${escHtml(r.reference)}')">Consulter</button>
               </td>
             </tr>`).join('')
@@ -5140,7 +5200,6 @@ const BackendApi = {
       setTxt('kpiApprovedRequests', kpis.approved_requests);
       if (kpis.stock_value !== undefined) setTxt('kpiStockTotalValue', formatCurrency(kpis.stock_value));
       setTxt('kpiOutOfStockCount', kpis.out_of_stock_count);
-      setTxt('kpiOverdueRequestsCount', kpis.overdue_requests);
 
       if (kpis.requests_in_progress !== undefined) {
         setTxt('kpiCollabInProgress', kpis.requests_in_progress);

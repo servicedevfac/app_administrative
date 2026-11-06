@@ -562,6 +562,9 @@ class OperationsController extends Controller
         ]);
 
         $resourceType = $validated['resource_type'];
+        $requiredPermission = $resourceType === 'vehicle' ? 'vehicles.manage' : 'assets.manage';
+        abort_unless($request->user()?->hasPermission($requiredPermission), 403, 'Vous ne disposez pas de la permission nécessaire pour gérer cette maintenance.');
+
         $model = $resourceType === 'vehicle'
             ? Vehicle::findOrFail($validated['resource_id'])
             : Asset::findOrFail($validated['resource_id']);
@@ -603,6 +606,9 @@ class OperationsController extends Controller
 
     public function updateMaintenance(Request $request, MaintenanceRecord $maintenanceRecord): JsonResponse
     {
+        $requiredPermission = $maintenanceRecord->maintainable instanceof Vehicle ? 'vehicles.manage' : 'assets.manage';
+        abort_unless($request->user()?->hasPermission($requiredPermission), 403, 'Vous ne disposez pas de la permission nécessaire pour gérer cette maintenance.');
+
         $validated = $request->validate([
             'status' => ['required', Rule::in(['Planifiée', 'En cours', 'Terminée', 'Annulée'])],
             'completed_at' => ['nullable', 'date'],
@@ -1199,76 +1205,13 @@ class OperationsController extends Controller
 
     public function createBackup(Request $request): JsonResponse
     {
-        $tablesToBackup = [
-            'departments',
-            'storage_locations',
-            'suppliers',
-            'article_categories',
-            'measurement_units',
-            'request_categories',
-            'system_settings',
-            'articles',
-            'material_requests',
-            'request_items',
-            'request_decisions',
-            'stock_movements',
-            'inventory_sessions',
-            'inventory_items',
-            'assets',
-            'asset_assignments',
-            'asset_incidents',
-            'vehicles',
-            'vehicle_documents',
-            'maintenance_records',
-            'expenses',
-            'expense_attachments',
-            'expense_audits',
-            'administrative_documents',
-            'approval_delegations',
-            'saved_reports',
-        ];
+        $backup = SystemBackup::createSnapshot($request->user());
 
-        $payloadTables = [];
-        $recordsCount = 0;
-
-        foreach ($tablesToBackup as $table) {
-            if (Schema::hasTable($table)) {
-                $rows = DB::table($table)->get()->map(fn ($row) => (array) $row)->all();
-                $payloadTables[$table] = $rows;
-                $recordsCount += count($rows);
-            }
-        }
-
-        $nextNumber = (int) SystemBackup::max('id') + 1;
-        $reference = 'BKP-'.now()->format('Y').'-'.str_pad((string) $nextNumber, 5, '0', STR_PAD_LEFT);
-        $filename = $reference.'_'.now()->format('Ymd_His').'.json';
-        $filePath = "backups/{$filename}";
-
-        $json = json_encode([
-            'app' => 'GESTION+',
-            'reference' => $reference,
-            'generated_at' => now()->toIso8601String(),
-            'generated_by' => $request->user()?->email,
-            'tables' => $payloadTables,
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-
-        Storage::disk('local')->put($filePath, (string) $json);
-
-        $backup = SystemBackup::create([
-            'reference' => $reference,
-            'filename' => $filename,
-            'file_path' => $filePath,
-            'size_bytes' => strlen((string) $json),
-            'tables_count' => count($payloadTables),
-            'records_count' => $recordsCount,
-            'created_by' => $request->user()?->id,
-        ]);
-
-        $this->recordActivity($request, 'backup.created', $backup, "Sauvegarde système {$reference} générée ({$recordsCount} enregistrements).");
+        $this->recordActivity($request, 'backup.created', $backup, "Sauvegarde système {$backup->reference} générée ({$backup->records_count} enregistrements).");
 
         return response()->json([
             'success' => true,
-            'message' => "Sauvegarde {$reference} générée avec succès.",
+            'message' => "Sauvegarde {$backup->reference} générée avec succès.",
             'data' => $backup->load('creator:id,name'),
         ], 201);
     }

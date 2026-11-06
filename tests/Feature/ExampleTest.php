@@ -132,7 +132,7 @@ class ExampleTest extends TestCase
             'motif' => 'Mission',
             'service' => 'Informatique',
             'urgency' => 'Normale',
-            'status' => 'Approuvée',
+            'status' => MaterialRequest::STATUS_VALIDATED,
             'approved_by' => $admin->id,
         ]);
         RequestItem::create([
@@ -161,7 +161,7 @@ class ExampleTest extends TestCase
         ]);
         $this->assertDatabaseHas('material_requests', [
             'id' => $materialRequest->id,
-            'status' => 'Restituée',
+            'status' => MaterialRequest::STATUS_VALIDATED,
         ]);
     }
 
@@ -187,7 +187,7 @@ class ExampleTest extends TestCase
             'motif' => 'Télétravail',
             'service' => 'Informatique',
             'urgency' => 'Normale',
-            'status' => 'En attente',
+            'status' => MaterialRequest::STATUS_SUBMITTED,
         ]);
         RequestItem::create([
             'material_request_id' => $materialRequest->id,
@@ -203,7 +203,7 @@ class ExampleTest extends TestCase
         $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 1]);
         $this->assertDatabaseHas('material_requests', [
             'id' => $materialRequest->id,
-            'status' => 'En attente',
+            'status' => MaterialRequest::STATUS_SUBMITTED,
         ]);
         $this->assertDatabaseCount('stock_movements', 0);
     }
@@ -345,7 +345,6 @@ class ExampleTest extends TestCase
         $created = $this->withHeaders($this->authorizationHeaders($collaborator))->postJson('/api/requests', [
             'motif' => 'Réunion',
             'service' => 'Direction',
-            'save_as_draft' => true,
             'items' => [['article_id' => $article->id, 'quantity' => 2]],
         ])->assertCreated();
 
@@ -363,7 +362,7 @@ class ExampleTest extends TestCase
         $this->assertSame(4, RequestDecision::query()->where('material_request_id', $requestId)->count());
         $this->assertDatabaseHas('material_requests', [
             'id' => $requestId,
-            'status' => MaterialRequest::STATUS_CANCELLED,
+            'status' => MaterialRequest::STATUS_REJECTED,
         ]);
     }
 
@@ -411,6 +410,24 @@ class ExampleTest extends TestCase
                 'motif' => 'Piratage',
             ])->assertStatus(403);
 
+        // An administrator can process the request, but cannot edit its contents.
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/requests/{$requestId}", [
+                'motif' => 'Modification administrative interdite',
+            ])->assertForbidden()
+            ->assertJsonPath('message', 'Seul le demandeur peut modifier sa demande.');
+
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->post("/api/requests/{$requestId}/attachments", [
+                'file' => UploadedFile::fake()->create('ajout-admin.pdf', 20, 'application/pdf'),
+            ], ['Accept' => 'application/json'])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('material_requests', [
+            'id' => $requestId,
+            'motif' => 'Besoin initial',
+        ]);
+
         // The requester CAN modify their submitted request
         $this->withHeaders($this->authorizationHeaders($requester))
             ->putJson("/api/requests/{$requestId}", [
@@ -454,7 +471,7 @@ class ExampleTest extends TestCase
         ]);
         $materialRequest = MaterialRequest::create([
             'reference' => 'DEM-2026-00020', 'user_id' => $employee->id, 'motif' => 'Réunion',
-            'service' => 'Direction', 'status' => MaterialRequest::STATUS_PENDING,
+            'service' => 'Direction', 'status' => MaterialRequest::STATUS_SUBMITTED,
         ]);
         RequestItem::create(['material_request_id' => $materialRequest->id, 'article_id' => $article->id, 'quantity_requested' => 3]);
 
@@ -472,7 +489,7 @@ class ExampleTest extends TestCase
         $employee = User::factory()->create();
         $materialRequest = MaterialRequest::create([
             'reference' => 'DEM-2026-00021', 'user_id' => $employee->id, 'motif' => 'Entretien',
-            'service' => 'Logistique', 'status' => MaterialRequest::STATUS_APPROVED,
+            'service' => 'Logistique', 'status' => MaterialRequest::STATUS_VALIDATED,
         ]);
 
         $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/expenses', [
