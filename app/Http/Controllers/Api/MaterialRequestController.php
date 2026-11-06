@@ -473,7 +473,7 @@ class MaterialRequestController extends Controller
 
             $bonPath = "documents/bons/Bon_de_Decharge_{$materialRequest->reference}.html";
             $bonHtml = $this->buildDischargeDocumentHtml($materialRequest->fresh(['user', 'items.article', 'approver']));
-            Storage::disk('local')->put($bonPath, $bonHtml);
+            Storage::disk()->put($bonPath, $bonHtml);
 
             AdministrativeDocument::create([
                 'material_request_id' => $materialRequest->id,
@@ -914,7 +914,7 @@ class MaterialRequestController extends Controller
 
     private function storeRequestAttachment(MaterialRequest $materialRequest, UploadedFile $file, int $userId): AdministrativeDocument
     {
-        $path = $file->store("documents/demandes/{$materialRequest->reference}", 'local');
+        $path = $file->store("documents/demandes/{$materialRequest->reference}");
         $extension = strtolower($file->getClientOriginalExtension());
         $type = match ($extension) {
             'doc', 'docx' => 'Word',

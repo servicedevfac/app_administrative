@@ -64,7 +64,7 @@ class DocumentController extends Controller
 
         $file = $request->file('file');
         $storedName = Str::uuid().'.'.$file->extension();
-        $storedPath = $file->storeAs('documents/archives', $storedName, 'local');
+        $storedPath = $file->storeAs('documents/archives', $storedName);
         $fileSize = $file->getSize();
 
         $doc = AdministrativeDocument::create([
@@ -95,11 +95,11 @@ class DocumentController extends Controller
 
     public function download(Request $request, AdministrativeDocument $document): StreamedResponse
     {
-        abort_unless($document->file_path && Storage::disk('local')->exists($document->file_path), 404, 'Fichier introuvable.');
+        abort_unless($document->file_path && Storage::disk()->exists($document->file_path), 404, 'Fichier introuvable.');
 
         $this->recordActivity($request, 'document.downloaded', $document, "Document {$document->title} téléchargé.");
 
-        return Storage::disk('local')->download(
+        return Storage::disk()->download(
             $document->file_path,
             $document->original_name ?? Str::slug($document->title).'.'.strtolower($document->type),
         );
@@ -114,8 +114,8 @@ class DocumentController extends Controller
             ], 403);
         }
 
-        if ($document->file_path && Storage::disk('local')->exists($document->file_path)) {
-            Storage::disk('local')->delete($document->file_path);
+        if ($document->file_path && Storage::disk()->exists($document->file_path)) {
+            Storage::disk()->delete($document->file_path);
         }
 
         $title = $document->title;

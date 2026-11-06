@@ -318,7 +318,7 @@ class ExampleTest extends TestCase
 
         $response->assertCreated()->assertJsonPath('success', true);
         $document = AdministrativeDocument::query()->firstOrFail();
-        Storage::disk('local')->assertExists($document->file_path);
+        Storage::disk()->assertExists($document->file_path);
 
         $this->withHeaders($headers)
             ->get("/api/documents/{$document->id}/download")

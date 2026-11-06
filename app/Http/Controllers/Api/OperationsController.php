@@ -497,7 +497,7 @@ class OperationsController extends Controller
 
             if ($request->hasFile('file')) {
                 $file = $request->file('file');
-                $filePath = $file->store("documents/vehicules/{$vehicle->registration_number}", 'local');
+                $filePath = $file->store("documents/vehicules/{$vehicle->registration_number}");
                 $originalName = $file->getClientOriginalName();
             }
 
@@ -538,10 +538,10 @@ class OperationsController extends Controller
 
     public function downloadVehicleDocument(Request $request, VehicleDocument $document): StreamedResponse
     {
-        abort_unless($document->file_path && Storage::disk('local')->exists($document->file_path), 404, 'Fichier introuvable.');
+        abort_unless($document->file_path && Storage::disk()->exists($document->file_path), 404, 'Fichier introuvable.');
         $this->recordActivity($request, 'vehicle.document_downloaded', $document, "Téléchargement du document véhicule {$document->reference}.");
 
-        return Storage::disk('local')->download($document->file_path, $document->original_name ?? "{$document->reference}.pdf");
+        return Storage::disk()->download($document->file_path, $document->original_name ?? "{$document->reference}.pdf");
     }
 
     public function storeMaintenance(Request $request): JsonResponse
@@ -931,10 +931,10 @@ class OperationsController extends Controller
 
     public function downloadExpenseAttachment(Request $request, ExpenseAttachment $attachment): StreamedResponse
     {
-        abort_unless($attachment->file_path && Storage::disk('local')->exists($attachment->file_path), 404, 'Justificatif introuvable.');
+        abort_unless($attachment->file_path && Storage::disk()->exists($attachment->file_path), 404, 'Justificatif introuvable.');
         $this->recordActivity($request, 'expense.attachment_downloaded', $attachment, "Téléchargement du justificatif {$attachment->title}.");
 
-        return Storage::disk('local')->download($attachment->file_path, $attachment->original_name);
+        return Storage::disk()->download($attachment->file_path, $attachment->original_name);
     }
 
     public function exportExpenses(): StreamedResponse
@@ -1218,10 +1218,10 @@ class OperationsController extends Controller
 
     public function downloadBackup(Request $request, SystemBackup $backup): StreamedResponse
     {
-        abort_unless(Storage::disk('local')->exists($backup->file_path), 404, 'Archive de sauvegarde introuvable.');
+        abort_unless(Storage::disk()->exists($backup->file_path), 404, 'Archive de sauvegarde introuvable.');
         $this->recordActivity($request, 'backup.downloaded', $backup, "Téléchargement de la sauvegarde {$backup->reference}.");
 
-        return Storage::disk('local')->download($backup->file_path, $backup->filename, ['Content-Type' => 'application/json']);
+        return Storage::disk()->download($backup->file_path, $backup->filename, ['Content-Type' => 'application/json']);
     }
 
     public function restoreBackup(Request $request): JsonResponse
@@ -1238,8 +1238,8 @@ class OperationsController extends Controller
         $backupModel = null;
         if (! empty($validated['backup_id'])) {
             $backupModel = SystemBackup::findOrFail($validated['backup_id']);
-            abort_unless(Storage::disk('local')->exists($backupModel->file_path), 404, 'Fichier de sauvegarde introuvable.');
-            $rawContent = Storage::disk('local')->get($backupModel->file_path);
+            abort_unless(Storage::disk()->exists($backupModel->file_path), 404, 'Fichier de sauvegarde introuvable.');
+            $rawContent = Storage::disk()->get($backupModel->file_path);
         } else {
             $rawContent = (string) file_get_contents($request->file('file')->getRealPath());
         }
@@ -1319,7 +1319,7 @@ class OperationsController extends Controller
         int $userId,
         ?string $customTitle = null,
     ): ExpenseAttachment {
-        $path = $file->store("documents/depenses/{$expense->reference}", 'local');
+        $path = $file->store("documents/depenses/{$expense->reference}");
 
         return ExpenseAttachment::create([
             'expense_id' => $expense->id,

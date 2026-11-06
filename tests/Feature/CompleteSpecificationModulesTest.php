@@ -557,7 +557,7 @@ class CompleteSpecificationModulesTest extends TestCase
         $backupId = (int) $backupRes->json('data.id');
         $this->assertMatchesRegularExpression('/^BKP-\d{4}-\d{5}$/', (string) $backupRes->json('data.reference'));
         $backup = SystemBackup::findOrFail($backupId);
-        Storage::disk('local')->assertExists($backup->file_path);
+        Storage::disk()->assertExists($backup->file_path);
 
         $this->withHeaders($headers)
             ->postJson('/api/backups/restore', ['backup_id' => $backupId])
@@ -567,7 +567,7 @@ class CompleteSpecificationModulesTest extends TestCase
         // Sauvegarde régulière planifiée, exécutable sans session utilisateur.
         $this->artisan('backup:data')->assertSuccessful();
         $automaticBackup = SystemBackup::whereNull('created_by')->latest()->firstOrFail();
-        Storage::disk('local')->assertExists($automaticBackup->file_path);
+        Storage::disk()->assertExists($automaticBackup->file_path);
         $this->assertDatabaseHas('activity_logs', [
             'action' => 'backup.created_automatically',
             'subject_id' => $automaticBackup->id,

@@ -90,7 +90,7 @@ class SystemBackup extends Model
             'tables' => $payloadTables,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
-        Storage::disk('local')->put($filePath, $json);
+        Storage::disk()->put($filePath, $json);
 
         return self::query()->create([
             'reference' => $reference,
