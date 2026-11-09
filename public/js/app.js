@@ -2922,10 +2922,12 @@ window.exportTableAsPdf = async function(moduleType) {
 /* ==========================================================================
    8. Module 1, 8, 9 & 10 : Utilisateurs, Documents, Audit, Sauvegardes
    ========================================================================== */
-function renderUserPermissionsGrid(selectedPermissions = null) {
+function renderUserPermissionsGrid(selectedPermissions = null, lockPermissions = false) {
   const grid = document.getElementById('usrPermissionsGrid');
   if (!grid) return;
-  const roleVal = document.getElementById('usrRole')?.value || 'Collaborateur';
+  const roleEl = document.getElementById('usrRole');
+  const roleVal = roleEl?.value || 'Collaborateur';
+  const isLocked = lockPermissions || Boolean(roleEl?.disabled);
   const activePerms = Array.isArray(selectedPermissions)
     ? selectedPermissions
     : (DEFAULT_ROLE_PERMISSIONS[roleVal] || DEFAULT_ROLE_PERMISSIONS.Collaborateur);
@@ -2933,7 +2935,7 @@ function renderUserPermissionsGrid(selectedPermissions = null) {
   grid.innerHTML = PERMISSION_CATALOG.map(perm => `
     <div class="col-6 col-md-4">
       <div class="form-check small">
-        <input class="form-check-input js-usr-perm-check" type="checkbox" value="${perm.key}" id="perm_${perm.key.replace('.', '_')}" ${activePerms.includes(perm.key) ? 'checked' : ''}>
+        <input class="form-check-input js-usr-perm-check" type="checkbox" value="${perm.key}" id="perm_${perm.key.replace('.', '_')}" ${activePerms.includes(perm.key) ? 'checked' : ''} ${isLocked ? 'disabled' : ''}>
         <label class="form-check-label" for="perm_${perm.key.replace('.', '_')}">${escHtml(perm.label)}</label>
       </div>
     </div>
@@ -2953,6 +2955,7 @@ function resetUserModalMode() {
   const matWrapper = document.getElementById('usrMatriculeWrapper');
   const matDisplay = document.getElementById('usrMatriculeDisplay');
   const submitBtn = document.getElementById('usrSubmitBtn');
+  const roleSelect = document.getElementById('usrRole');
 
   if (title) title.textContent = 'Ajouter un compte utilisateur';
   if (pwdInput) { pwdInput.required = true; pwdInput.value = ''; }
@@ -2961,6 +2964,7 @@ function resetUserModalMode() {
   if (matWrapper) matWrapper.style.display = 'none';
   if (matDisplay) matDisplay.textContent = '-';
   if (submitBtn) submitBtn.textContent = 'Créer le compte';
+  if (roleSelect) roleSelect.disabled = false;
 
   renderUserPermissionsGrid();
 }
@@ -2983,7 +2987,11 @@ window.openEditUserModal = function (userId) {
   document.getElementById('usrMatriculeDisplay').textContent = u.matricule || '-';
 
   const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
-  document.getElementById('usrRole').value = roleMap[u.role] || 'Collaborateur';
+  const roleSelect = document.getElementById('usrRole');
+  if (roleSelect) {
+    roleSelect.value = roleMap[u.role] || 'Collaborateur';
+    roleSelect.disabled = u.role === 'admin';
+  }
   const srvSel = document.getElementById('usrService');
   if (srvSel && u.service) {
     if (![...srvSel.options].some(o => o.value === u.service)) {
@@ -3000,7 +3008,7 @@ window.openEditUserModal = function (userId) {
   if (pwdHint) pwdHint.textContent = 'Laissez vide pour conserver le mot de passe actuel.';
 
   document.getElementById('usrSubmitBtn').textContent = 'Enregistrer les modifications';
-  renderUserPermissionsGrid(u.effective_permissions || u.permissions || null);
+  renderUserPermissionsGrid(u.effective_permissions || u.permissions || null, u.role === 'admin');
 
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNewUser')).show();
 };
@@ -3015,6 +3023,10 @@ window.openResetUserPasswordModal = function (userId, userName) {
 window.openValidateUserRoleModal = function (userId) {
   const user = (AppState.currentUsers || []).find(item => Number(item.id) === Number(userId));
   if (!user) return;
+  if (user.role === 'admin') {
+    showToast('Le rôle de l’administrateur ne peut pas être modifié.', 'warning');
+    return;
+  }
 
   const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
   document.getElementById('validateRoleUserId').value = user.id;
@@ -4693,7 +4705,7 @@ const BackendApi = {
             <td><span class="badge-status ${u.is_active ? 'badge-in-stock' : 'badge-rejected'}"><span class="badge-status-dot"></span> ${u.is_active ? 'Actif' : 'Désactivé'}</span></td>
             <td class="small text-muted">${formatDateTime(u.last_login_at, 'Jamais')}</td>
             <td class="text-end text-nowrap">
-              <button type="button" class="btn btn-sm btn-outline-primary" title="Valider ou modifier le profil et le rôle" onclick="openValidateUserRoleModal(${u.id})"><i class="bi bi-shield-check me-1"></i>${u.role === 'collaborator' ? 'Valider le profil' : 'Modifier le rôle'}</button>
+              ${u.role !== 'admin' ? `<button type="button" class="btn btn-sm btn-outline-primary" title="Valider ou modifier le profil et le rôle" onclick="openValidateUserRoleModal(${u.id})"><i class="bi bi-shield-check me-1"></i>${u.role === 'collaborator' ? 'Valider le profil' : 'Modifier le rôle'}</button>` : `<span class="badge bg-secondary-subtle text-secondary border me-1" title="Le rôle Administrateur ne peut pas être modifié"><i class="bi bi-lock-fill me-1"></i>Rôle verrouillé</span>`}
               <button type="button" class="btn-gp-icon" title="Modifier l’utilisateur & ses permissions" onclick="openEditUserModal(${u.id})"><i class="bi bi-pencil-square"></i></button>
               <button type="button" class="btn-gp-icon" title="Réinitialiser le mot de passe" onclick="openResetUserPasswordModal(${u.id}, '${escHtml(u.name)}')"><i class="bi bi-key"></i></button>
               ${!isCurrentSessionUser ? `

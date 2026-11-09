@@ -144,10 +144,10 @@ class UserController extends Controller
 
         if (isset($validated['role'])) {
             $newRole = User::normalizeRole($validated['role']);
-            if ($user->isAdmin() && $newRole !== User::ROLE_ADMIN && User::where('role', User::ROLE_ADMIN)->count() <= 1) {
+            if ($user->isAdmin() && $newRole !== User::ROLE_ADMIN) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Impossible de retirer le rôle Administrateur au dernier administrateur du système.',
+                    'message' => 'Le rôle de l’administrateur ne peut pas être modifié.',
                 ], 422);
             }
             $validated['role'] = $newRole;
@@ -155,6 +155,11 @@ class UserController extends Controller
             if (! array_key_exists('permissions', $validated) && $newRole !== $user->role) {
                 $validated['permissions'] = User::defaultPermissionsForRole($newRole);
             }
+        }
+
+        if ($user->isAdmin()) {
+            $validated['role'] = User::ROLE_ADMIN;
+            $validated['permissions'] = User::defaultPermissionsForRole(User::ROLE_ADMIN);
         }
 
         if (array_key_exists('is_active', $validated)) {
@@ -191,6 +196,14 @@ class UserController extends Controller
     public function updateRole(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
+
+        if ($user->isAdmin()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Le rôle de l’administrateur ne peut pas être modifié.',
+            ], 422);
+        }
+
         $validated = $request->validate([
             'role' => ['required', 'string', Rule::in([
                 User::ROLE_ADMIN,
@@ -204,13 +217,6 @@ class UserController extends Controller
 
         $previousRole = $user->role;
         $newRole = User::normalizeRole($validated['role']);
-
-        if ($user->isAdmin() && $newRole !== User::ROLE_ADMIN && User::where('role', User::ROLE_ADMIN)->count() <= 1) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Impossible de retirer le rôle Administrateur au dernier administrateur du système.',
-            ], 422);
-        }
 
         $user->update([
             'role' => $newRole,

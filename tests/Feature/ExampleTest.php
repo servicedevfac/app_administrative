@@ -290,6 +290,26 @@ class ExampleTest extends TestCase
             'id' => $pendingRequest->id,
             'assigned_to' => $collaborator->id,
         ]);
+
+        $secondAdmin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'service' => 'Direction Générale',
+        ]);
+
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/users/{$secondAdmin->id}/role", ['role' => 'Collaborateur'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/users/{$secondAdmin->id}", ['role' => 'Responsable'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertDatabaseHas('users', [
+            'id' => $secondAdmin->id,
+            'role' => User::ROLE_ADMIN,
+        ]);
     }
 
     public function test_a_request_is_routed_to_the_active_manager_of_its_department(): void

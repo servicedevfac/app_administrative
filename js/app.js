@@ -280,6 +280,7 @@ window.downloadAuthenticatedFile = async (url, fallbackName = 'export.csv') => {
 // Initialisation au chargement du DOM
 document.addEventListener('DOMContentLoaded', () => {
   setupPasswordToggles();
+  setupResponsiveNavigation();
   setupNavigation();
   setupRoleSwitcher();
   setupStepper();
@@ -348,6 +349,39 @@ function setupPasswordToggles() {
       icon.classList.toggle('bi-eye-slash', shouldShowPassword);
     }
   });
+}
+
+function setupResponsiveNavigation() {
+  const toggleButton = document.getElementById('sidebarToggleButton');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  const mobileBreakpoint = window.matchMedia('(max-width: 767px)');
+
+  const setSidebarOpen = (isOpen) => {
+    const shouldOpen = Boolean(isOpen && mobileBreakpoint.matches);
+    document.body.classList.toggle('sidebar-mobile-open', shouldOpen);
+    toggleButton?.setAttribute('aria-expanded', String(shouldOpen));
+    toggleButton?.setAttribute('aria-label', shouldOpen ? 'Fermer le menu de navigation' : 'Ouvrir le menu de navigation');
+  };
+
+  toggleButton?.addEventListener('click', () => {
+    setSidebarOpen(!document.body.classList.contains('sidebar-mobile-open'));
+  });
+  backdrop?.addEventListener('click', () => setSidebarOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setSidebarOpen(false);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('.app-sidebar [data-view-target]')) setSidebarOpen(false);
+  });
+
+  const handleBreakpointChange = () => setSidebarOpen(false);
+  if (typeof mobileBreakpoint.addEventListener === 'function') {
+    mobileBreakpoint.addEventListener('change', handleBreakpointChange);
+  } else {
+    mobileBreakpoint.addListener(handleBreakpointChange);
+  }
 }
 
 /* ==========================================================================
@@ -2888,10 +2922,12 @@ window.exportTableAsPdf = async function(moduleType) {
 /* ==========================================================================
    8. Module 1, 8, 9 & 10 : Utilisateurs, Documents, Audit, Sauvegardes
    ========================================================================== */
-function renderUserPermissionsGrid(selectedPermissions = null) {
+function renderUserPermissionsGrid(selectedPermissions = null, lockPermissions = false) {
   const grid = document.getElementById('usrPermissionsGrid');
   if (!grid) return;
-  const roleVal = document.getElementById('usrRole')?.value || 'Collaborateur';
+  const roleEl = document.getElementById('usrRole');
+  const roleVal = roleEl?.value || 'Collaborateur';
+  const isLocked = lockPermissions || Boolean(roleEl?.disabled);
   const activePerms = Array.isArray(selectedPermissions)
     ? selectedPermissions
     : (DEFAULT_ROLE_PERMISSIONS[roleVal] || DEFAULT_ROLE_PERMISSIONS.Collaborateur);
@@ -2899,7 +2935,7 @@ function renderUserPermissionsGrid(selectedPermissions = null) {
   grid.innerHTML = PERMISSION_CATALOG.map(perm => `
     <div class="col-6 col-md-4">
       <div class="form-check small">
-        <input class="form-check-input js-usr-perm-check" type="checkbox" value="${perm.key}" id="perm_${perm.key.replace('.', '_')}" ${activePerms.includes(perm.key) ? 'checked' : ''}>
+        <input class="form-check-input js-usr-perm-check" type="checkbox" value="${perm.key}" id="perm_${perm.key.replace('.', '_')}" ${activePerms.includes(perm.key) ? 'checked' : ''} ${isLocked ? 'disabled' : ''}>
         <label class="form-check-label" for="perm_${perm.key.replace('.', '_')}">${escHtml(perm.label)}</label>
       </div>
     </div>
@@ -2919,6 +2955,7 @@ function resetUserModalMode() {
   const matWrapper = document.getElementById('usrMatriculeWrapper');
   const matDisplay = document.getElementById('usrMatriculeDisplay');
   const submitBtn = document.getElementById('usrSubmitBtn');
+  const roleSelect = document.getElementById('usrRole');
 
   if (title) title.textContent = 'Ajouter un compte utilisateur';
   if (pwdInput) { pwdInput.required = true; pwdInput.value = ''; }
@@ -2927,6 +2964,7 @@ function resetUserModalMode() {
   if (matWrapper) matWrapper.style.display = 'none';
   if (matDisplay) matDisplay.textContent = '-';
   if (submitBtn) submitBtn.textContent = 'Créer le compte';
+  if (roleSelect) roleSelect.disabled = false;
 
   renderUserPermissionsGrid();
 }
@@ -2949,7 +2987,11 @@ window.openEditUserModal = function (userId) {
   document.getElementById('usrMatriculeDisplay').textContent = u.matricule || '-';
 
   const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
-  document.getElementById('usrRole').value = roleMap[u.role] || 'Collaborateur';
+  const roleSelect = document.getElementById('usrRole');
+  if (roleSelect) {
+    roleSelect.value = roleMap[u.role] || 'Collaborateur';
+    roleSelect.disabled = u.role === 'admin';
+  }
   const srvSel = document.getElementById('usrService');
   if (srvSel && u.service) {
     if (![...srvSel.options].some(o => o.value === u.service)) {
@@ -2966,7 +3008,7 @@ window.openEditUserModal = function (userId) {
   if (pwdHint) pwdHint.textContent = 'Laissez vide pour conserver le mot de passe actuel.';
 
   document.getElementById('usrSubmitBtn').textContent = 'Enregistrer les modifications';
-  renderUserPermissionsGrid(u.effective_permissions || u.permissions || null);
+  renderUserPermissionsGrid(u.effective_permissions || u.permissions || null, u.role === 'admin');
 
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNewUser')).show();
 };
@@ -2976,6 +3018,21 @@ window.openResetUserPasswordModal = function (userId, userName) {
   document.getElementById('resetTargetUserName').textContent = userName;
   document.getElementById('resetTargetUserPassword').value = '';
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalResetUserPassword')).show();
+};
+
+window.openValidateUserRoleModal = function (userId) {
+  const user = (AppState.currentUsers || []).find(item => Number(item.id) === Number(userId));
+  if (!user) return;
+  if (user.role === 'admin') {
+    showToast('Le rôle de l’administrateur ne peut pas être modifié.', 'warning');
+    return;
+  }
+
+  const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
+  document.getElementById('validateRoleUserId').value = user.id;
+  document.getElementById('validateRoleUserName').textContent = `${user.name} • ${user.service || 'Sans service'}`;
+  document.getElementById('validateUserRoleSelect').value = roleMap[user.role] || 'Collaborateur';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalValidateUserRole')).show();
 };
 
 async function openAllLoginHistoryModal() {
@@ -3301,6 +3358,24 @@ function setupModalsAndActions() {
     }
   });
 
+  document.getElementById('formValidateUserRole')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const userId = document.getElementById('validateRoleUserId').value;
+    const role = document.getElementById('validateUserRoleSelect').value;
+    const res = await fetch(`/api/users/${userId}/role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role })
+    });
+    const result = await res.json();
+    const message = Object.values(result.errors || {}).flat()[0] || result.message || 'Validation du profil impossible.';
+    showToast(message, res.ok ? 'success' : 'danger');
+    if (!res.ok) return;
+
+    bootstrap.Modal.getInstance(document.getElementById('modalValidateUserRole'))?.hide();
+    await BackendApi.loadUsers();
+  });
+
   // Réinitialisation mot de passe utilisateur par l'admin
   document.getElementById('formResetUserPassword')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3615,13 +3690,12 @@ function setupAuthAndSettingsHandlers() {
     const name = document.getElementById('regNom').value.trim();
     const email = document.getElementById('regEmail').value.trim();
     const service = document.getElementById('regService').value;
-    const role = document.getElementById('regRole')?.value || 'Collaborateur';
 
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, service, role, password: pwd })
+        body: JSON.stringify({ name, email, service, password: pwd })
       });
       const result = await res.json();
       if (res.ok && result.success && result.user && result.token) {
@@ -4631,6 +4705,7 @@ const BackendApi = {
             <td><span class="badge-status ${u.is_active ? 'badge-in-stock' : 'badge-rejected'}"><span class="badge-status-dot"></span> ${u.is_active ? 'Actif' : 'Désactivé'}</span></td>
             <td class="small text-muted">${formatDateTime(u.last_login_at, 'Jamais')}</td>
             <td class="text-end text-nowrap">
+              ${u.role !== 'admin' ? `<button type="button" class="btn btn-sm btn-outline-primary" title="Valider ou modifier le profil et le rôle" onclick="openValidateUserRoleModal(${u.id})"><i class="bi bi-shield-check me-1"></i>${u.role === 'collaborator' ? 'Valider le profil' : 'Modifier le rôle'}</button>` : `<span class="badge bg-secondary-subtle text-secondary border me-1" title="Le rôle Administrateur ne peut pas être modifié"><i class="bi bi-lock-fill me-1"></i>Rôle verrouillé</span>`}
               <button type="button" class="btn-gp-icon" title="Modifier l’utilisateur & ses permissions" onclick="openEditUserModal(${u.id})"><i class="bi bi-pencil-square"></i></button>
               <button type="button" class="btn-gp-icon" title="Réinitialiser le mot de passe" onclick="openResetUserPasswordModal(${u.id}, '${escHtml(u.name)}')"><i class="bi bi-key"></i></button>
               ${!isCurrentSessionUser ? `
