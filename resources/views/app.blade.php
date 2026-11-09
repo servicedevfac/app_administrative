@@ -2005,10 +2005,11 @@
                     <th>Profil & Permissions</th>
                     <th>Service</th>
                     <th>Statut</th>
+                    <th>Dernière connexion</th>
                     <th class="text-end">Actions</th>
                   </tr>
                 </thead>
-                <tbody id="usersTableBody"><tr><td colspan="6" class="text-center py-4 text-muted"><i class="bi bi-people me-2"></i>Aucun utilisateur enregistré.</td></tr></tbody>
+                <tbody id="usersTableBody"><tr><td colspan="7" class="text-center py-4 text-muted"><i class="bi bi-people me-2"></i>Aucun utilisateur enregistré.</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -3400,6 +3401,39 @@
           <div class="modal-footer bg-light">
             <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
             <button type="submit" class="btn-gp-primary" id="usrSubmitBtn">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL : VALIDATION DU PROFIL ET DU RÔLE PAR L'ADMINISTRATEUR -->
+  <div class="modal fade" id="modalValidateUserRole" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <form id="formValidateUserRole">
+          <div class="modal-header">
+            <div>
+              <h5 class="modal-title fw-bold">Valider le profil et le rôle</h5>
+              <p class="small text-muted mb-0" id="validateRoleUserName">Utilisateur sélectionné</p>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" id="validateRoleUserId">
+            <div class="alert alert-primary small">
+              Cette action confirme le niveau d’accès de l’utilisateur et applique automatiquement les permissions correspondant au rôle choisi.
+            </div>
+            <label class="form-label fw-semibold" for="validateUserRoleSelect">Profil / rôle validé</label>
+            <select id="validateUserRoleSelect" class="form-select" required>
+              <option value="Collaborateur">Collaborateur / Employé</option>
+              <option value="Responsable">Responsable du département</option>
+              <option value="Administrateur">Administrateur / Direction</option>
+            </select>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn-gp-primary"><i class="bi bi-shield-check"></i> Valider le profil</button>
           </div>
         </form>
       </div>

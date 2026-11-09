@@ -108,7 +108,7 @@ class CompleteSpecificationModulesTest extends TestCase
     {
         Storage::fake('local');
 
-        $manager = User::factory()->create(['role' => User::ROLE_MANAGER, 'service' => 'Administration Générale']);
+        $manager = User::factory()->create(['role' => User::ROLE_MANAGER, 'service' => 'Informatique']);
         $agent = User::factory()->create(['role' => User::ROLE_MANAGER, 'service' => 'Logistique & Moyens Généraux']);
         $employee = User::factory()->create(['role' => User::ROLE_COLLABORATOR, 'service' => 'Informatique']);
 

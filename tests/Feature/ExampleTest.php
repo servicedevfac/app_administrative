@@ -10,6 +10,7 @@ use App\Models\MaterialRequest;
 use App\Models\RequestDecision;
 use App\Models\RequestItem;
 use App\Models\StockMovement;
+use App\Models\SystemNotification;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -250,10 +251,26 @@ class ExampleTest extends TestCase
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
         $manager = User::factory()->create(['role' => User::ROLE_MANAGER]);
-        $collaborator = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $collaborator = User::factory()->create([
+            'role' => User::ROLE_COLLABORATOR,
+            'service' => 'Informatique',
+        ]);
+        $requester = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+        $pendingRequest = MaterialRequest::create([
+            'reference' => 'DEM-'.now()->format('Y').'-00777',
+            'user_id' => $requester->id,
+            'type_operation' => 'Dotation permanente',
+            'category' => 'Prestations de services',
+            'motif' => 'Demande en attente de responsable',
+            'service_description' => 'Demande créée avant la validation du responsable.',
+            'service' => 'Informatique',
+            'urgency' => 'Normale',
+            'status' => MaterialRequest::STATUS_SUBMITTED,
+            'submitted_at' => now(),
+        ]);
 
         $this->withHeaders($this->authorizationHeaders($manager))
-            ->putJson("/api/users/{$collaborator->id}", ['role' => 'Responsable'])
+            ->putJson("/api/users/{$collaborator->id}/role", ['role' => 'Responsable'])
             ->assertForbidden();
         $this->assertDatabaseHas('users', [
             'id' => $collaborator->id,
@@ -261,13 +278,67 @@ class ExampleTest extends TestCase
         ]);
 
         $this->withHeaders($this->authorizationHeaders($admin))
-            ->putJson("/api/users/{$collaborator->id}", ['role' => 'Responsable'])
+            ->putJson("/api/users/{$collaborator->id}/role", ['role' => 'Responsable'])
             ->assertOk()
-            ->assertJsonPath('data.role', User::ROLE_MANAGER);
+            ->assertJsonPath('data.role', User::ROLE_MANAGER)
+            ->assertJsonPath('routed_request_count', 1);
         $this->assertDatabaseHas('users', [
             'id' => $collaborator->id,
             'role' => User::ROLE_MANAGER,
         ]);
+        $this->assertDatabaseHas('material_requests', [
+            'id' => $pendingRequest->id,
+            'assigned_to' => $collaborator->id,
+        ]);
+    }
+
+    public function test_a_request_is_routed_to_the_active_manager_of_its_department(): void
+    {
+        $informationTechnologyManager = User::factory()->create([
+            'role' => User::ROLE_MANAGER,
+            'service' => 'Informatique',
+            'is_active' => true,
+        ]);
+        $financeManager = User::factory()->create([
+            'role' => User::ROLE_MANAGER,
+            'service' => 'Finance',
+            'is_active' => true,
+        ]);
+        $employee = User::factory()->create([
+            'role' => User::ROLE_COLLABORATOR,
+            'service' => 'Informatique',
+        ]);
+
+        $response = $this->withHeaders($this->authorizationHeaders($employee))->postJson('/api/requests', [
+            'category' => 'Prestations de services',
+            'motif' => 'Intervention réseau',
+            'service_description' => 'Diagnostic du réseau du département informatique.',
+            'service' => 'Informatique',
+            'urgency' => 'Normale',
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.assigned_to', $informationTechnologyManager->id)
+            ->assertJsonPath('data.assignee.id', $informationTechnologyManager->id);
+        $this->assertDatabaseHas('system_notifications', [
+            'user_id' => $informationTechnologyManager->id,
+            'type' => 'request.submitted',
+        ]);
+        $this->assertDatabaseMissing('system_notifications', [
+            'user_id' => $financeManager->id,
+            'type' => 'request.submitted',
+        ]);
+
+        $this->withHeaders($this->authorizationHeaders($informationTechnologyManager))
+            ->getJson('/api/requests')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+        $this->withHeaders($this->authorizationHeaders($financeManager))
+            ->getJson('/api/requests')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->assertSame(1, SystemNotification::where('type', 'request.submitted')->count());
     }
 
     public function test_administrator_can_record_a_manual_stock_adjustment(): void

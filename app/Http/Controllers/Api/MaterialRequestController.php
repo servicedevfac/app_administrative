@@ -37,7 +37,13 @@ class MaterialRequestController extends Controller
                 $sub->where('user_id', $actor?->id)
                     ->orWhere('assigned_to', $actor?->id);
             });
-        } elseif (! $actor->isAdmin() && ! $actor->isManager() && $actor->hasActiveDelegation()) {
+        } elseif ($actor->isManager()) {
+            $query->where(function ($sub) use ($actor): void {
+                $sub->where('user_id', $actor->id)
+                    ->orWhere('assigned_to', $actor->id)
+                    ->orWhere('service', $actor->service);
+            });
+        } elseif (! $actor->isAdmin() && $actor->hasActiveDelegation()) {
             $delegatedDepts = $actor->delegationsReceived()
                 ->where('is_active', true)
                 ->pluck('department')
@@ -178,17 +184,18 @@ class MaterialRequestController extends Controller
             }
 
             $this->recordDecision($materialRequest, $request->user(), 'submitted', null, $status, $validated['notes'] ?? null);
-            $this->recordActivity($request, 'request.created', $materialRequest, "Demande {$reference} créée ({$status}).", ['status' => $status, 'category' => $categoryName]);
-
-            $this->notifyOperationalManagers(
-                'request.submitted',
-                'Nouvelle demande à traiter',
-                "La demande {$reference} ({$categoryName}) a été soumise par {$request->user()->name}.",
-                "#request-detail/{$reference}",
-                'notify_on_request_submitted',
+            $departmentManager = $this->routeToDepartmentManager(
+                $materialRequest,
+                'Nouvelle demande de votre département',
+                "La demande {$reference} ({$categoryName}) a été soumise par {$request->user()->name} pour le service {$materialRequest->service}.",
             );
+            $this->recordActivity($request, 'request.created', $materialRequest, "Demande {$reference} créée ({$status}).", [
+                'status' => $status,
+                'category' => $categoryName,
+                'department_manager_id' => $departmentManager?->id,
+            ]);
 
-            $materialRequest->load(['items.article', 'user', 'documents', 'decisions.user']);
+            $materialRequest->load(['items.article', 'user', 'assignee', 'documents', 'decisions.user']);
 
             return response()->json([
                 'success' => true,
@@ -251,7 +258,11 @@ class MaterialRequestController extends Controller
             $materialRequest->correction_reason = null;
             $materialRequest->save();
             $this->recordDecision($materialRequest, $request->user(), 'updated', $previousStatus, $materialRequest->status, 'Demande modifiée par le demandeur.');
-            $this->notifyOperationalManagers('request.submitted', 'Demande modifiée', "La demande {$materialRequest->reference} a été mise à jour par le demandeur.", "#request-detail/{$materialRequest->reference}", 'notify_on_request_submitted');
+            $this->routeToDepartmentManager(
+                $materialRequest,
+                'Demande de votre département modifiée',
+                "La demande {$materialRequest->reference} a été mise à jour par le demandeur.",
+            );
         });
 
         $this->recordActivity($request, 'request.updated', $materialRequest, "Demande {$materialRequest->reference} modifiée.", [
@@ -640,18 +651,16 @@ class MaterialRequestController extends Controller
 
         $this->recordDecision($materialRequest, $request->user(), 'submitted', $previousStatus, MaterialRequest::STATUS_SUBMITTED, $request->string('comment')->toString() ?: null);
         $this->recordActivity($request, 'request.submitted', $materialRequest, "Demande {$materialRequest->reference} soumise.");
-        $this->notifyOperationalManagers(
-            'request.submitted',
-            'Demande à valider',
-            "La demande {$materialRequest->reference} a été soumise.",
-            "#request-detail/{$materialRequest->reference}",
-            'notify_on_request_submitted',
+        $this->routeToDepartmentManager(
+            $materialRequest,
+            'Demande de votre département à valider',
+            "La demande {$materialRequest->reference} a été soumise pour le service {$materialRequest->service}.",
         );
 
         return response()->json([
             'success' => true,
             'message' => 'Demande soumise pour traitement.',
-            'data' => $materialRequest->fresh(['decisions.user']),
+            'data' => $materialRequest->fresh(['assignee', 'decisions.user']),
         ]);
     }
 
@@ -832,6 +841,51 @@ class MaterialRequestController extends Controller
             'message' => "Demande validée affectée à {$agent->name}.",
             'data' => $materialRequest->fresh(['assignee', 'decisions.user']),
         ]);
+    }
+
+    private function routeToDepartmentManager(
+        MaterialRequest $materialRequest,
+        string $title,
+        string $message,
+    ): ?User {
+        $departmentManager = User::query()
+            ->where('role', User::ROLE_MANAGER)
+            ->where('is_active', true)
+            ->where('service', $materialRequest->service)
+            ->orderBy('id')
+            ->first();
+
+        $materialRequest->update([
+            'assigned_to' => $departmentManager?->id,
+        ]);
+
+        if ($departmentManager !== null) {
+            $this->sendSystemNotification(
+                $departmentManager->id,
+                'request.submitted',
+                $title,
+                $message,
+                "#request-detail/{$materialRequest->reference}",
+                'notify_on_request_submitted',
+            );
+
+            return $departmentManager;
+        }
+
+        User::query()
+            ->where('role', User::ROLE_ADMIN)
+            ->where('is_active', true)
+            ->pluck('id')
+            ->each(fn (int $adminId) => $this->sendSystemNotification(
+                $adminId,
+                'request.unassigned_department',
+                'Aucun responsable pour une demande',
+                "La demande {$materialRequest->reference} attend un responsable actif pour le service {$materialRequest->service}.",
+                "#request-detail/{$materialRequest->reference}",
+                'notify_on_request_submitted',
+            ));
+
+        return null;
     }
 
     /**

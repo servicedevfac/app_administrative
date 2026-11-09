@@ -165,6 +165,7 @@ Route::middleware('auth:api')->group(function (): void {
         Route::post('/users', [UserController::class, 'store']);
         Route::get('/users/{id}', [UserController::class, 'show']);
         Route::put('/users/{id}', [UserController::class, 'update']);
+        Route::put('/users/{id}/role', [UserController::class, 'updateRole']);
         Route::put('/users/{id}/active', [UserController::class, 'toggleActive']);
         Route::put('/users/{id}/reset-password', [UserController::class, 'resetPassword']);
         Route::delete('/users/{id}', [UserController::class, 'destroy']);

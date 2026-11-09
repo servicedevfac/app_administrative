@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
+use App\Models\MaterialRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -181,6 +182,83 @@ class UserController extends Controller
             'success' => true,
             'message' => "Utilisateur \"{$user->name}\" mis à jour.",
             'data' => $user->fresh(),
+        ]);
+    }
+
+    /**
+     * Validation explicite du profil et du rôle par un administrateur.
+     */
+    public function updateRole(Request $request, string $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        $validated = $request->validate([
+            'role' => ['required', 'string', Rule::in([
+                User::ROLE_ADMIN,
+                User::ROLE_MANAGER,
+                User::ROLE_COLLABORATOR,
+                'Administrateur',
+                'Responsable',
+                'Collaborateur',
+            ])],
+        ]);
+
+        $previousRole = $user->role;
+        $newRole = User::normalizeRole($validated['role']);
+
+        if ($user->isAdmin() && $newRole !== User::ROLE_ADMIN && User::where('role', User::ROLE_ADMIN)->count() <= 1) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Impossible de retirer le rôle Administrateur au dernier administrateur du système.',
+            ], 422);
+        }
+
+        $user->update([
+            'role' => $newRole,
+            'permissions' => User::defaultPermissionsForRole($newRole),
+            'avatar' => User::defaultAvatar($newRole),
+        ]);
+
+        $routedRequestCount = 0;
+        if ($newRole === User::ROLE_MANAGER && $user->is_active) {
+            $pendingRequests = MaterialRequest::query()
+                ->whereIn('status', MaterialRequest::PENDING_WORKFLOW_STATUSES)
+                ->where('service', $user->service)
+                ->whereNull('assigned_to')
+                ->get();
+
+            foreach ($pendingRequests as $pendingRequest) {
+                $pendingRequest->update(['assigned_to' => $user->id]);
+                $this->sendSystemNotification(
+                    $user->id,
+                    'request.submitted',
+                    'Demande de votre département à traiter',
+                    "La demande {$pendingRequest->reference} vous a été transmise après validation de votre profil Responsable.",
+                    "#request-detail/{$pendingRequest->reference}",
+                    'notify_on_request_submitted',
+                );
+            }
+
+            $routedRequestCount = $pendingRequests->count();
+        }
+
+        $this->recordActivity($request, 'user.role_validated', $user, "Profil et rôle de {$user->name} validés par l’administrateur.", [
+            'previous_role' => $previousRole,
+            'new_role' => $newRole,
+            'routed_request_count' => $routedRequestCount,
+        ]);
+        $this->sendSystemNotification(
+            $user->id,
+            'user.role_validated',
+            'Votre profil a été validé',
+            'Votre profil est désormais configuré avec le rôle '.($newRole === User::ROLE_MANAGER ? 'Responsable' : ($newRole === User::ROLE_ADMIN ? 'Administrateur' : 'Collaborateur')).'.',
+            '#profile',
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => "Le profil et le rôle de {$user->name} ont été validés.",
+            'data' => $user->fresh(),
+            'routed_request_count' => $routedRequestCount,
         ]);
     }
 

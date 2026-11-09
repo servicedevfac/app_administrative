@@ -3012,6 +3012,17 @@ window.openResetUserPasswordModal = function (userId, userName) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalResetUserPassword')).show();
 };
 
+window.openValidateUserRoleModal = function (userId) {
+  const user = (AppState.currentUsers || []).find(item => Number(item.id) === Number(userId));
+  if (!user) return;
+
+  const roleMap = { admin: 'Administrateur', manager: 'Responsable', collaborator: 'Collaborateur' };
+  document.getElementById('validateRoleUserId').value = user.id;
+  document.getElementById('validateRoleUserName').textContent = `${user.name} • ${user.service || 'Sans service'}`;
+  document.getElementById('validateUserRoleSelect').value = roleMap[user.role] || 'Collaborateur';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalValidateUserRole')).show();
+};
+
 async function openAllLoginHistoryModal() {
   try {
     const res = await fetch('/api/login-history');
@@ -3333,6 +3344,24 @@ function setupModalsAndActions() {
       const msg = Object.values(result.errors || {}).flat()[0] || result.message || 'Opération impossible.';
       showToast(msg, 'danger');
     }
+  });
+
+  document.getElementById('formValidateUserRole')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const userId = document.getElementById('validateRoleUserId').value;
+    const role = document.getElementById('validateUserRoleSelect').value;
+    const res = await fetch(`/api/users/${userId}/role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role })
+    });
+    const result = await res.json();
+    const message = Object.values(result.errors || {}).flat()[0] || result.message || 'Validation du profil impossible.';
+    showToast(message, res.ok ? 'success' : 'danger');
+    if (!res.ok) return;
+
+    bootstrap.Modal.getInstance(document.getElementById('modalValidateUserRole'))?.hide();
+    await BackendApi.loadUsers();
   });
 
   // Réinitialisation mot de passe utilisateur par l'admin
@@ -4664,6 +4693,7 @@ const BackendApi = {
             <td><span class="badge-status ${u.is_active ? 'badge-in-stock' : 'badge-rejected'}"><span class="badge-status-dot"></span> ${u.is_active ? 'Actif' : 'Désactivé'}</span></td>
             <td class="small text-muted">${formatDateTime(u.last_login_at, 'Jamais')}</td>
             <td class="text-end text-nowrap">
+              <button type="button" class="btn btn-sm btn-outline-primary" title="Valider ou modifier le profil et le rôle" onclick="openValidateUserRoleModal(${u.id})"><i class="bi bi-shield-check me-1"></i>${u.role === 'collaborator' ? 'Valider le profil' : 'Modifier le rôle'}</button>
               <button type="button" class="btn-gp-icon" title="Modifier l’utilisateur & ses permissions" onclick="openEditUserModal(${u.id})"><i class="bi bi-pencil-square"></i></button>
               <button type="button" class="btn-gp-icon" title="Réinitialiser le mot de passe" onclick="openResetUserPasswordModal(${u.id}, '${escHtml(u.name)}')"><i class="bi bi-key"></i></button>
               ${!isCurrentSessionUser ? `
