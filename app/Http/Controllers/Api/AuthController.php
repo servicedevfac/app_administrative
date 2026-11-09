@@ -71,7 +71,7 @@ class AuthController extends Controller
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:6',
             'service' => 'required|string',
-            'role' => 'nullable|string|in:admin,collaborator,manager,Administrateur,Collaborateur,Responsable',
+            'role' => 'prohibited',
         ]);
 
         $isFirstUser = User::count() === 0;

@@ -3615,13 +3615,12 @@ function setupAuthAndSettingsHandlers() {
     const name = document.getElementById('regNom').value.trim();
     const email = document.getElementById('regEmail').value.trim();
     const service = document.getElementById('regService').value;
-    const role = document.getElementById('regRole')?.value || 'Collaborateur';
 
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, service, role, password: pwd })
+        body: JSON.stringify({ name, email, service, password: pwd })
       });
       const result = await res.json();
       if (res.ok && result.success && result.user && result.token) {

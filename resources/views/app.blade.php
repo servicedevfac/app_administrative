@@ -2705,6 +2705,10 @@
             <p class="auth-subtitle">Renseignez vos informations professionnelles pour débuter</p>
           </div>
 
+          <div class="alert alert-primary border-primary-subtle small" role="note">
+            Votre compte sera créé avec le profil <strong>Collaborateur</strong>. Seul un administrateur peut ensuite vous attribuer le profil <strong>Responsable</strong>.
+          </div>
+
           <form id="formRegisterUser">
             <div class="row g-3 mb-3">
               <div class="col-12 col-md-6">

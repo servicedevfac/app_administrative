@@ -208,7 +208,7 @@ class ExampleTest extends TestCase
         $this->assertDatabaseCount('stock_movements', 0);
     }
 
-    public function test_public_registration_cannot_create_another_administrator(): void
+    public function test_public_registration_rejects_a_requested_privileged_role(): void
     {
         User::factory()->create(['role' => User::ROLE_ADMIN]);
 
@@ -220,11 +220,53 @@ class ExampleTest extends TestCase
             'role' => 'admin',
         ]);
 
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors('role');
+        $this->assertDatabaseMissing('users', [
+            'email' => 'nouvel.utilisateur@example.test',
+        ]);
+    }
+
+    public function test_public_registration_creates_a_collaborator(): void
+    {
+        User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $response = $this->postJson('/api/auth/register', [
+            'name' => 'Nouvelle collaboratrice',
+            'email' => 'nouvelle.collaboratrice@example.test',
+            'password' => 'secret123',
+            'service' => 'Finance',
+        ]);
+
         $response->assertCreated()
             ->assertJsonPath('user.role', User::ROLE_COLLABORATOR);
         $this->assertDatabaseHas('users', [
-            'email' => 'nouvel.utilisateur@example.test',
+            'email' => 'nouvelle.collaboratrice@example.test',
             'role' => User::ROLE_COLLABORATOR,
+        ]);
+    }
+
+    public function test_only_an_administrator_can_promote_a_collaborator_to_manager(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $manager = User::factory()->create(['role' => User::ROLE_MANAGER]);
+        $collaborator = User::factory()->create(['role' => User::ROLE_COLLABORATOR]);
+
+        $this->withHeaders($this->authorizationHeaders($manager))
+            ->putJson("/api/users/{$collaborator->id}", ['role' => 'Responsable'])
+            ->assertForbidden();
+        $this->assertDatabaseHas('users', [
+            'id' => $collaborator->id,
+            'role' => User::ROLE_COLLABORATOR,
+        ]);
+
+        $this->withHeaders($this->authorizationHeaders($admin))
+            ->putJson("/api/users/{$collaborator->id}", ['role' => 'Responsable'])
+            ->assertOk()
+            ->assertJsonPath('data.role', User::ROLE_MANAGER);
+        $this->assertDatabaseHas('users', [
+            'id' => $collaborator->id,
+            'role' => User::ROLE_MANAGER,
         ]);
     }
 
