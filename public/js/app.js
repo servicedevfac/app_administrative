@@ -237,15 +237,76 @@ function endWriteActivity(control) {
   }, remaining);
 }
 
+function getAuthToken() {
+  return sessionStorage.getItem('gestion_token') || localStorage.getItem('gestion_token') || '';
+}
+
+function getStoredUser() {
+  const raw = sessionStorage.getItem('gestion_user') || localStorage.getItem('gestion_user');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function setAuthSession(user, token) {
+  if (token) {
+    sessionStorage.setItem('gestion_token', token);
+    localStorage.setItem('gestion_token', token);
+  }
+  if (user) {
+    const raw = typeof user === 'string' ? user : JSON.stringify(user);
+    sessionStorage.setItem('gestion_user', raw);
+    localStorage.setItem('gestion_user', raw);
+  }
+}
+
+function clearAuthSession() {
+  sessionStorage.removeItem('gestion_token');
+  sessionStorage.removeItem('gestion_user');
+  localStorage.removeItem('gestion_token');
+  localStorage.removeItem('gestion_user');
+  AppState.currentUser = null;
+}
+
+window.addEventListener('storage', (event) => {
+  if (event.key === 'gestion_token') {
+    if (!event.newValue) {
+      sessionStorage.removeItem('gestion_token');
+      sessionStorage.removeItem('gestion_user');
+      AppState.currentUser = null;
+      if (AppState.currentView !== 'login' && AppState.currentView !== 'register') {
+        showToast('Votre session a été fermée.', 'info');
+        navigateToView('login', false);
+      }
+    } else {
+      sessionStorage.setItem('gestion_token', event.newValue);
+    }
+  }
+  if (event.key === 'gestion_user' && event.newValue) {
+    sessionStorage.setItem('gestion_user', event.newValue);
+    try {
+      const parsed = JSON.parse(event.newValue);
+      applyUser(parsed);
+    } catch (e) {}
+  }
+});
+
 const nativeFetch = window.fetch.bind(window);
 window.fetch = (input, options = {}) => {
   const requestUrl = typeof input === 'string' ? input : input.url;
   const isApiRequest = requestUrl.startsWith('/api/') || requestUrl.startsWith(`${window.location.origin}/api/`);
-  const token = sessionStorage.getItem('gestion_token');
+  const token = getAuthToken();
   const method = `${options.method || (typeof input !== 'string' ? input.method : 'GET') || 'GET'}`.toUpperCase();
   const isWriteRequest = isApiRequest && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
   const headers = new Headers(options.headers || (typeof input !== 'string' ? input.headers : undefined));
-  if (isApiRequest && token) headers.set('Authorization', `Bearer ${token}`);
+
+  if (isApiRequest && token) {
+    headers.set('Authorization', `Bearer ${token}`);
+    headers.set('X-Api-Token', token);
+  }
   if (isApiRequest && !headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }
@@ -254,6 +315,20 @@ window.fetch = (input, options = {}) => {
 
   const control = isWriteRequest ? beginWriteActivity(method) : null;
   return nativeFetch(input, { ...options, headers })
+    .then(async (response) => {
+      if (response.status === 401 && !requestUrl.includes('/api/auth/login')) {
+        const hadSession = Boolean(getAuthToken());
+        clearAuthSession();
+        document.querySelectorAll('.modal.show').forEach((modalEl) => {
+          bootstrap.Modal.getInstance(modalEl)?.hide();
+        });
+        if (hadSession && AppState.currentView !== 'login' && AppState.currentView !== 'register') {
+          showToast('Votre session a expiré. Veuillez vous reconnecter.', 'warning');
+          navigateToView('login', false);
+        }
+      }
+      return response;
+    })
     .finally(() => {
       if (isWriteRequest) endWriteActivity(control);
     });
@@ -299,18 +374,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const delStart = document.getElementById('delegationStartDate');
   if (delStart && !delStart.value) delStart.value = todayIso;
 
-  const storedUser = sessionStorage.getItem('gestion_user');
-  const storedToken = sessionStorage.getItem('gestion_token');
+  const storedUser = getStoredUser();
+  const storedToken = getAuthToken();
   const hasAuthenticatedSession = Boolean(storedUser && storedToken);
   if (hasAuthenticatedSession) {
-    try {
-      applyUser(JSON.parse(storedUser));
-    } catch (e) {
-      sessionStorage.removeItem('gestion_user');
-      sessionStorage.removeItem('gestion_token');
-      navigateToView('login', false);
-    }
+    applyUser(storedUser);
   } else {
+    clearAuthSession();
     navigateToView('login', false);
   }
 
@@ -542,12 +612,10 @@ function handleRouteHash() {
 
 function navigateToView(viewId, updateHash = true) {
   if (viewId === 'logout') {
-    if (sessionStorage.getItem('gestion_token')) {
+    if (getAuthToken()) {
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     }
-    sessionStorage.removeItem('gestion_user');
-    sessionStorage.removeItem('gestion_token');
-    AppState.currentUser = null;
+    clearAuthSession();
     AppState.isSuperAdmin = false;
     AppState.canManageOps = false;
     AppState.currentRole = 'collaborator';
@@ -560,7 +628,7 @@ function navigateToView(viewId, updateHash = true) {
   const appContainer = document.getElementById('appMainContainer');
   const authContainer = document.getElementById('authLayoutContainer');
 
-  if (!isAuthView && !sessionStorage.getItem('gestion_token')) {
+  if (!isAuthView && !getAuthToken()) {
     viewId = 'login';
     return navigateToView('login', updateHash);
   }
@@ -3204,6 +3272,12 @@ function setupModalsAndActions() {
     formNewArticle.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!AppState.canManageOps) return;
+      if (!getAuthToken()) {
+        showToast('Votre session a expiré. Veuillez vous reconnecter.', 'warning');
+        bootstrap.Modal.getInstance(document.getElementById('modalNewArticle'))?.hide();
+        navigateToView('login', false);
+        return;
+      }
       const name = document.getElementById('artName').value.trim();
       const cat = document.getElementById('artCategory').value;
       const unit = document.getElementById('artUnit').value;
@@ -3221,15 +3295,16 @@ function setupModalsAndActions() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, maximum_threshold: maximumThreshold, unit_cost: unitCost, supplier, location })
       });
-      const result = await res.json();
+      const result = await res.json().catch(() => ({}));
       if (res.ok && result.success) {
         showToast(result.message || 'Article enregistré !', 'success');
         bootstrap.Modal.getInstance(document.getElementById('modalNewArticle'))?.hide();
         resetArticleFormMode();
         await BackendApi.refreshAll({ showIndicator: true, silent: true });
-      } else {
+      } else if (res.status !== 401) {
         const validationMessage = Object.values(result.errors || {}).flat()[0];
-        showToast(validationMessage || result.message || 'Erreur lors de l’enregistrement.', 'danger');
+        const errorMessage = validationMessage || (result.message === 'Unauthenticated.' ? 'Votre session a expiré. Veuillez vous reconnecter.' : result.message) || 'Erreur lors de l’enregistrement.';
+        showToast(errorMessage, 'danger');
       }
     });
   }
@@ -3699,8 +3774,7 @@ function setupAuthAndSettingsHandlers() {
       });
       const result = await res.json();
       if (res.ok && result.success && result.user && result.token) {
-        sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
-        sessionStorage.setItem('gestion_token', result.token);
+        setAuthSession(result.user, result.token);
         applyUser(result.user);
         showToast(result.message || `Compte créé avec succès pour ${name} !`, 'success');
         navigateToView('dashboard');
@@ -3728,8 +3802,7 @@ function setupAuthAndSettingsHandlers() {
       });
       const result = await res.json();
       if (res.ok && result.success && result.user && result.token) {
-        sessionStorage.setItem('gestion_user', JSON.stringify(result.user));
-        sessionStorage.setItem('gestion_token', result.token);
+        setAuthSession(result.user, result.token);
         applyUser(result.user);
         showToast(`Bienvenue ${result.user.name} !`, 'success');
         navigateToView('dashboard');
@@ -3905,7 +3978,7 @@ function setupAuthAndSettingsHandlers() {
     });
     const data = await res.json();
     if (res.ok && data.success) {
-      sessionStorage.setItem('gestion_user', JSON.stringify(data.user));
+      setAuthSession(data.user, null);
       applyUser(data.user);
       if (document.getElementById('profileCurrentPassword')) document.getElementById('profileCurrentPassword').value = '';
       if (document.getElementById('profileNewPassword')) document.getElementById('profileNewPassword').value = '';
@@ -4183,27 +4256,23 @@ const BackendApi = {
         await this.loadCatalogReferences(true);
 
         if (this.isDbConnected && data.has_users === false) {
-          sessionStorage.removeItem('gestion_user');
-          sessionStorage.removeItem('gestion_token');
-          AppState.currentUser = null;
+          clearAuthSession();
           navigateToView('register', false);
           return data;
         }
 
-        const token = sessionStorage.getItem('gestion_token');
+        const token = getAuthToken();
         if (token) {
           const meRes = await fetch(`${this.baseUrl}/auth/me`);
           if (!meRes.ok) {
-            sessionStorage.removeItem('gestion_user');
-            sessionStorage.removeItem('gestion_token');
-            AppState.currentUser = null;
+            clearAuthSession();
             showToast('Votre session a expiré ou a été révoquée. Veuillez vous reconnecter.', 'warning');
             navigateToView('login', false);
             return data;
           }
           const meJson = await meRes.json();
           if (meJson.success && meJson.user) {
-            sessionStorage.setItem('gestion_user', JSON.stringify(meJson.user));
+            setAuthSession(meJson.user, null);
             applyUser(meJson.user);
           }
 
@@ -4227,7 +4296,7 @@ const BackendApi = {
   },
 
   async refreshAll(options = { showIndicator: false, silent: false }) {
-    if (!this.isOnline || !this.isDbConnected || !sessionStorage.getItem('gestion_token')) return;
+    if (!this.isOnline || !this.isDbConnected || !getAuthToken()) return;
 
     try {
       const loads = [
@@ -4271,7 +4340,7 @@ const BackendApi = {
   startAutoRefresh(intervalMs = 25000) {
     if (this._autoRefreshTimer) clearInterval(this._autoRefreshTimer);
     this._autoRefreshTimer = setInterval(() => {
-      if (!document.hidden && !document.querySelector('.modal.show') && sessionStorage.getItem('gestion_token')) {
+      if (!document.hidden && !document.querySelector('.modal.show') && getAuthToken()) {
         this.refreshAll({ silent: true, showIndicator: false });
       }
     }, intervalMs);
@@ -4279,7 +4348,7 @@ const BackendApi = {
 
   async loadCatalogReferences(usePublic = false) {
     try {
-      const endpoint = usePublic || !sessionStorage.getItem('gestion_token')
+      const endpoint = usePublic || !getAuthToken()
         ? `${this.baseUrl}/public-references`
         : `${this.baseUrl}/catalog-references`;
       const res = await fetch(endpoint);

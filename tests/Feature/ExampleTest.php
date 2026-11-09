@@ -422,7 +422,19 @@ class ExampleTest extends TestCase
 
     public function test_private_api_rejects_an_unauthenticated_request(): void
     {
-        $this->getJson('/api/articles')->assertUnauthorized();
+        $this->getJson('/api/articles')
+            ->assertUnauthorized()
+            ->assertJsonPath('message', 'Votre session a expiré ou vos identifiants sont invalides. Veuillez vous reconnecter.');
+    }
+
+    public function test_private_api_authenticates_with_x_api_token_header(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $token = $admin->issueApiToken();
+
+        $this->withHeaders(['X-Api-Token' => $token])
+            ->getJson('/api/articles')
+            ->assertOk();
     }
 
     public function test_collaborator_cannot_access_administration_routes(): void
