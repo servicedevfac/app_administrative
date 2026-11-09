@@ -37,7 +37,7 @@
     <!-- ========================================================================
          SIDEBAR NAVIGATION
          ======================================================================== -->
-    <aside class="app-sidebar">
+    <aside class="app-sidebar" id="appSidebar" aria-label="Navigation principale">
       <div class="sidebar-header">
         <a href="#dashboard" class="brand-logo" data-view-target="dashboard">
           <div class="brand-icon">
@@ -100,6 +100,8 @@
       </div>
     </aside>
 
+    <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Fermer le menu de navigation" tabindex="-1"></button>
+
     <!-- ========================================================================
          MAIN WRAPPER (TOPBAR + CONTENU)
          ======================================================================== -->
@@ -107,6 +109,10 @@
 
       <!-- TOPBAR NAVIGATION -->
       <header class="app-topbar">
+        <button type="button" class="sidebar-toggle-button" id="sidebarToggleButton" aria-controls="appSidebar" aria-expanded="false" aria-label="Ouvrir le menu de navigation">
+          <i class="bi bi-list" aria-hidden="true"></i>
+        </button>
+
         <div class="topbar-search position-relative">
           <i class="bi bi-search"></i>
           <input type="text" id="topbarGlobalSearch" placeholder="Rechercher une demande, un article, un bien, un véhicule..." autocomplete="off">

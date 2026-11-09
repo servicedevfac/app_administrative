@@ -280,6 +280,7 @@ window.downloadAuthenticatedFile = async (url, fallbackName = 'export.csv') => {
 // Initialisation au chargement du DOM
 document.addEventListener('DOMContentLoaded', () => {
   setupPasswordToggles();
+  setupResponsiveNavigation();
   setupNavigation();
   setupRoleSwitcher();
   setupStepper();
@@ -348,6 +349,39 @@ function setupPasswordToggles() {
       icon.classList.toggle('bi-eye-slash', shouldShowPassword);
     }
   });
+}
+
+function setupResponsiveNavigation() {
+  const toggleButton = document.getElementById('sidebarToggleButton');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  const mobileBreakpoint = window.matchMedia('(max-width: 767px)');
+
+  const setSidebarOpen = (isOpen) => {
+    const shouldOpen = Boolean(isOpen && mobileBreakpoint.matches);
+    document.body.classList.toggle('sidebar-mobile-open', shouldOpen);
+    toggleButton?.setAttribute('aria-expanded', String(shouldOpen));
+    toggleButton?.setAttribute('aria-label', shouldOpen ? 'Fermer le menu de navigation' : 'Ouvrir le menu de navigation');
+  };
+
+  toggleButton?.addEventListener('click', () => {
+    setSidebarOpen(!document.body.classList.contains('sidebar-mobile-open'));
+  });
+  backdrop?.addEventListener('click', () => setSidebarOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setSidebarOpen(false);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('.app-sidebar [data-view-target]')) setSidebarOpen(false);
+  });
+
+  const handleBreakpointChange = () => setSidebarOpen(false);
+  if (typeof mobileBreakpoint.addEventListener === 'function') {
+    mobileBreakpoint.addEventListener('change', handleBreakpointChange);
+  } else {
+    mobileBreakpoint.addListener(handleBreakpointChange);
+  }
 }
 
 /* ==========================================================================
