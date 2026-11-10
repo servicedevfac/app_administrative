@@ -889,15 +889,15 @@ class MaterialRequestController extends Controller
     }
 
     /**
-     * Confirmation de réception par le demandeur (ou gestionnaire)
+     * Confirmation de réception par le collaborateur demandeur.
      */
     public function confirmReceipt(Request $request, string $id): JsonResponse
     {
         $materialRequest = MaterialRequest::query()->where('id', $id)->orWhere('reference', $id)->firstOrFail();
         $actor = $request->user();
 
-        if ($materialRequest->user_id !== $actor?->id && ! $actor?->canManageOperations()) {
-            return response()->json(['success' => false, 'message' => 'Seul le demandeur ou un responsable peut confirmer la réception.'], 403);
+        if ($actor?->role !== User::ROLE_COLLABORATOR || $materialRequest->user_id !== $actor->id) {
+            return response()->json(['success' => false, 'message' => 'Seul le collaborateur demandeur peut confirmer la réception.'], 403);
         }
 
         if (! in_array($materialRequest->status, MaterialRequest::AUTHORIZED_STATUSES, true)) {
@@ -908,7 +908,6 @@ class MaterialRequestController extends Controller
         $materialRequest->update([
             'received_at' => now(),
             'executed_at' => $materialRequest->executed_at ?? now(),
-            'closed_at' => $actor?->canManageOperations() && $request->boolean('close_immediately') ? now() : $materialRequest->closed_at,
         ]);
 
         $comment = $request->string('comment')->toString() ?: "Réception confirmée par {$actor?->name}.";

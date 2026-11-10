@@ -10,6 +10,7 @@ use App\Models\InventorySession;
 use App\Models\MaterialRequest;
 use App\Models\SavedReport;
 use App\Models\SystemBackup;
+use App\Models\SystemNotification;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -119,7 +120,6 @@ class CompleteSpecificationModulesTest extends TestCase
             'unit' => 'Pièce',
             'quantity' => 15,
             'threshold' => 3,
-            'maximum_threshold' => 30,
             'unit_cost' => 12000,
             'status' => Article::STATUS_AVAILABLE,
             'is_available' => true,
@@ -192,10 +192,20 @@ class CompleteSpecificationModulesTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', MaterialRequest::STATUS_VALIDATED);
 
+        $this->withHeaders($this->authorizationHeaders($manager))
+            ->putJson("/api/requests/{$reqId}/receive")
+            ->assertForbidden();
+
         // Étape 5 : Confirmation de réception par le demandeur
         $this->withHeaders($this->authorizationHeaders($employee))
             ->putJson("/api/requests/{$reqId}/receive", ['comment' => 'Bien reçu les 3 souris.'])
             ->assertOk();
+
+        $this->assertDatabaseHas('system_notifications', [
+            'user_id' => $manager->id,
+            'type' => 'request.received',
+        ]);
+        $this->assertSame(2, SystemNotification::query()->where('type', 'request.received')->count());
 
         // Étape 6 : Clôture finale
         $this->withHeaders($this->authorizationHeaders($manager))
@@ -235,7 +245,6 @@ class CompleteSpecificationModulesTest extends TestCase
             'unit' => 'Pièce',
             'quantity' => 5,
             'threshold' => 6,
-            'maximum_threshold' => 20,
             'unit_cost' => 45000,
             'location' => 'Magasin Central',
             'status' => Article::STATUS_LOW,
@@ -293,14 +302,14 @@ class CompleteSpecificationModulesTest extends TestCase
 
         $this->assertDatabaseHas('articles', ['id' => $article->id, 'quantity' => 5]);
 
-        // État de réapprovisionnement (quantité 5 <= seuil 6, cible max 20 -> 15 à commander)
+        // État de réapprovisionnement basé uniquement sur le seuil minimal (cible calculée 12 -> 7 à commander)
         $replenishment = $this->withHeaders($headers)->getJson('/api/articles-replenishment')
             ->assertOk()
             ->assertJsonPath('success', true);
 
         $item = collect($replenishment->json('data'))->firstWhere('id', $article->id);
         $this->assertNotNull($item);
-        $this->assertSame(15, $item['suggested_order_quantity']);
+        $this->assertSame(7, $item['suggested_order_quantity']);
 
         // RM-09 : Inventaire avec écart non justifié bloqué à la validation
         $inv = InventorySession::create([

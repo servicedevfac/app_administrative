@@ -1155,7 +1155,7 @@
                     <th>Unité</th>
                     <th>Coût unit.</th>
                     <th>Quantité</th>
-                    <th>Seuils (Min/Max)</th>
+                    <th>Seuil minimal</th>
                     <th>Statut</th>
                     <th class="text-end">Actions</th>
                   </tr>
@@ -1461,7 +1461,6 @@
                   <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionAssign" data-permission="requests.assign"><i class="bi bi-person-check me-2"></i> Affecter à un agent</button></li>
                   <li><hr class="dropdown-divider"></li>
                   <li><button class="dropdown-item py-2 text-primary fw-semibold" id="btnActionDeliver" data-permission="requests.execute"><i class="bi bi-box-seam me-2"></i> Enregistrer la remise / livraison</button></li>
-                  <li><button class="dropdown-item py-2 text-success fw-semibold" id="btnActionReceive" data-permission="requests.execute"><i class="bi bi-check2-square me-2"></i> Confirmer réception</button></li>
                   <li><button class="dropdown-item py-2 text-primary" id="btnActionReturn" data-permission="requests.execute"><i class="bi bi-arrow-return-left me-2"></i> Enregistrer restitution en stock</button></li>
                   <li><button class="dropdown-item py-2 text-secondary fw-semibold" id="btnActionClose" data-permission="requests.execute"><i class="bi bi-archive me-2"></i> Clôturer définitivement</button></li>
                   <li><hr class="dropdown-divider"></li>
@@ -3008,7 +3007,7 @@
                   <th>Désignation</th>
                   <th>Fournisseur</th>
                   <th class="text-center">Qté dispo</th>
-                  <th class="text-center">Seuil min / max</th>
+                  <th class="text-center">Seuil minimal</th>
                   <th class="text-center">Qté suggérée</th>
                   <th class="text-end">Coût estimé</th>
                 </tr>
@@ -3132,10 +3131,6 @@
               <div class="col-6">
                 <label class="form-label fw-semibold">Seuil minimal d'alerte</label>
                 <input type="number" id="artThreshold" class="form-control" value="5" min="0" required>
-              </div>
-              <div class="col-6">
-                <label class="form-label fw-semibold">Seuil maximum</label>
-                <input type="number" id="artMaximumThreshold" class="form-control" min="1" placeholder="Ex: 100">
               </div>
               <div class="col-6">
                 <label class="form-label fw-semibold">Emplacement de stockage</label>

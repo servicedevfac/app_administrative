@@ -73,10 +73,8 @@ class ArticleController extends Controller
             ->orderBy('name')
             ->get()
             ->map(function (Article $article): array {
-                $targetMax = $article->maximum_threshold && $article->maximum_threshold > $article->threshold
-                    ? $article->maximum_threshold
-                    : max($article->threshold * 2, $article->threshold + 5);
-                $suggestedQty = max(1, $targetMax - $article->quantity);
+                $targetQuantity = max($article->threshold * 2, $article->threshold + 5);
+                $suggestedQty = max(1, $targetQuantity - $article->quantity);
                 $unitCost = (float) ($article->unit_cost ?? 0);
 
                 return [
@@ -89,7 +87,6 @@ class ArticleController extends Controller
                     'supplier' => $article->supplier,
                     'quantity' => $article->quantity,
                     'threshold' => $article->threshold,
-                    'maximum_threshold' => $targetMax,
                     'suggested_order_quantity' => $suggestedQty,
                     'unit_cost' => $unitCost,
                     'estimated_order_cost' => round($suggestedQty * $unitCost, 2),
@@ -119,13 +116,11 @@ class ArticleController extends Controller
         return response()->streamDownload(function () use ($articles): void {
             $output = fopen('php://output', 'wb');
             fwrite($output, "\xEF\xBB\xBF");
-            fputcsv($output, ['Code', 'Désignation', 'Catégorie', 'Unité', 'Stock actuel', 'Seuil min', 'Seuil cible', 'Qté à commander', 'Fournisseur', 'Coût unitaire', 'Montant estimé'], ';');
+            fputcsv($output, ['Code', 'Désignation', 'Catégorie', 'Unité', 'Stock actuel', 'Seuil minimal', 'Qté à commander', 'Fournisseur', 'Coût unitaire', 'Montant estimé'], ';');
 
             foreach ($articles as $article) {
-                $targetMax = $article->maximum_threshold && $article->maximum_threshold > $article->threshold
-                    ? $article->maximum_threshold
-                    : max($article->threshold * 2, $article->threshold + 5);
-                $suggestedQty = max(1, $targetMax - $article->quantity);
+                $targetQuantity = max($article->threshold * 2, $article->threshold + 5);
+                $suggestedQty = max(1, $targetQuantity - $article->quantity);
                 $unitCost = (float) ($article->unit_cost ?? 0);
 
                 fputcsv($output, [
@@ -135,7 +130,6 @@ class ArticleController extends Controller
                     $article->unit,
                     $article->quantity,
                     $article->threshold,
-                    $targetMax,
                     $suggestedQty,
                     $article->supplier ?? '-',
                     $unitCost,
@@ -158,7 +152,6 @@ class ArticleController extends Controller
             'unit' => ['required', 'string', Rule::exists('measurement_units', 'name')->where('is_active', true)],
             'quantity' => 'required|integer|min:0',
             'threshold' => 'required|integer|min:1',
-            'maximum_threshold' => 'nullable|integer|gte:threshold',
             'unit_cost' => 'nullable|numeric|min:0',
             'supplier' => 'nullable|string|max:255',
             'location' => 'nullable|string|max:255',
@@ -229,7 +222,7 @@ class ArticleController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $article = Article::findOrFail($id);
-        $before = $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'maximum_threshold', 'unit_cost', 'supplier', 'location']);
+        $before = $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'unit_cost', 'supplier', 'location']);
 
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
@@ -237,7 +230,6 @@ class ArticleController extends Controller
             'unit' => ['sometimes', 'string', Rule::exists('measurement_units', 'name')->where('is_active', true)],
             'quantity' => 'sometimes|integer|min:0',
             'threshold' => 'sometimes|integer|min:1',
-            'maximum_threshold' => 'nullable|integer|min:1',
             'unit_cost' => 'nullable|numeric|min:0',
             'supplier' => 'nullable|string|max:255',
             'location' => 'nullable|string|max:255',
@@ -254,7 +246,7 @@ class ArticleController extends Controller
         $article->update($validated);
         $this->recordActivity($request, 'article.updated', $article, "Article {$article->code} mis à jour.", [
             'before' => $before,
-            'after' => $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'maximum_threshold', 'unit_cost', 'supplier', 'location']),
+            'after' => $article->only(['name', 'category', 'unit', 'quantity', 'threshold', 'unit_cost', 'supplier', 'location']),
         ]);
 
         return response()->json([
@@ -293,7 +285,7 @@ class ArticleController extends Controller
         return response()->streamDownload(function () use ($articles): void {
             $output = fopen('php://output', 'wb');
             fwrite($output, "\xEF\xBB\xBF");
-            fputcsv($output, ['Code', 'Article', 'Catégorie', 'Unité', 'Quantité', 'Seuil Min', 'Seuil Max', 'Coût unitaire', 'Valeur totale', 'Fournisseur', 'Statut', 'Emplacement'], ';');
+            fputcsv($output, ['Code', 'Article', 'Catégorie', 'Unité', 'Quantité', 'Seuil minimal', 'Coût unitaire', 'Valeur totale', 'Fournisseur', 'Statut', 'Emplacement'], ';');
 
             foreach ($articles as $article) {
                 $unitCost = (float) ($article->unit_cost ?? 0);
@@ -304,7 +296,6 @@ class ArticleController extends Controller
                     $article->unit,
                     $article->quantity,
                     $article->threshold,
-                    $article->maximum_threshold ?? '-',
                     $unitCost,
                     round($article->quantity * $unitCost, 2),
                     $article->supplier ?? '-',

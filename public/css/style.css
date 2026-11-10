@@ -788,12 +788,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .requests-table th:nth-child(1) { width: 8%; }
-.requests-table th:nth-child(2) { width: 17%; }
-.requests-table th:nth-child(3) { width: 23%; }
+.requests-table th:nth-child(2) { width: 16%; }
+.requests-table th:nth-child(3) { width: 20%; }
 .requests-table th:nth-child(4) { width: 8%; }
 .requests-table th:nth-child(5) { width: 11%; }
-.requests-table th:nth-child(6) { width: 6%; }
-.requests-table th:nth-child(7) { width: 10%; }
+.requests-table th:nth-child(6) { width: 9%; }
+.requests-table th:nth-child(7) { width: 11%; }
 .requests-table th:nth-child(8) { width: 9%; }
 .requests-table th:nth-child(9) { width: 8%; }
 
@@ -827,6 +827,12 @@ h1, h2, h3, h4, h5, h6 {
 .requests-table td:nth-child(5),
 .requests-table td:nth-child(7) {
   overflow-wrap: anywhere;
+}
+
+.requests-table th:nth-child(7),
+.requests-table td:nth-child(7) {
+  padding-left: 18px;
+  border-left: 1px solid var(--gp-slate-100);
 }
 
 .requests-table th:last-child,

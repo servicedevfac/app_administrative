@@ -1489,7 +1489,8 @@ async function openRequestDetail(reference) {
 
   const btnConfirmReceipt = document.getElementById('btnRequesterConfirmReceipt');
   if (btnConfirmReceipt) {
-    const canConfirm = (isOwner || AppState.canManageOps)
+    const canConfirm = isOwner
+      && AppState.currentUser?.role === 'collaborator'
       && req.status === 'Validée'
       && !req.received_at;
     btnConfirmReceipt.style.display = canConfirm ? 'inline-flex' : 'none';
@@ -1517,7 +1518,6 @@ async function openRequestDetail(reference) {
     btnActionCorrection: isPending,
     btnActionAssign: isValidated,
     btnActionDeliver: isValidated && !req.delivered_at,
-    btnActionReceive: isValidated && !req.received_at,
     btnActionReturn: req.type_operation === 'Emprunt temporaire' && isValidated && !hasReturned,
     btnActionClose: isValidated && !req.closed_at,
     btnActionReject: isPending
@@ -1788,7 +1788,6 @@ window.openEditArticle = async function (articleId) {
   document.getElementById('artQty').value = article.quantity;
   document.getElementById('artThreshold').value = article.threshold;
   document.getElementById('artLocation').value = article.location || '';
-  document.getElementById('artMaximumThreshold').value = article.maximum_threshold || '';
   document.getElementById('artUnitCost').value = article.unit_cost || '';
   document.getElementById('artSupplier').value = article.supplier || '';
 
@@ -1843,7 +1842,7 @@ async function openReplenishmentModal() {
             </td>
             <td>${escHtml(it.supplier || '—')}</td>
             <td class="text-center"><span class="badge ${it.quantity <= 0 ? 'bg-danger' : 'bg-warning text-dark'}">${it.quantity} ${escHtml(it.unit)}</span></td>
-            <td class="text-center">${it.threshold} / ${it.maximum_threshold}</td>
+            <td class="text-center">${it.threshold}</td>
             <td class="text-center fw-bold text-primary">+${it.suggested_order_quantity} ${escHtml(it.unit)}</td>
             <td class="text-end fw-semibold">${formatCurrency(it.estimated_order_cost)}</td>
           </tr>`).join('')
@@ -2877,7 +2876,7 @@ window.exportTableAsPdf = async function(moduleType) {
     title = 'État de Réapprovisionnement des Stocks (Besoins d’Achat)';
     refCode = `REAPPRO-${new Date().toISOString().slice(0, 10)}`;
     const totalEstCost = list.reduce((sum, a) => {
-      const needed = Math.max(1, (a.max_stock || a.min_stock * 2) - a.stock);
+      const needed = Math.max(1, (a.min_stock * 2) - a.stock);
       return sum + (needed * Number(a.unit_price || 0));
     }, 0);
 
@@ -2896,7 +2895,7 @@ window.exportTableAsPdf = async function(moduleType) {
             <th>Désignation</th>
             <th>Fournisseur</th>
             <th class="text-center">En Stock</th>
-            <th class="text-center">Seuil Min / Max</th>
+            <th class="text-center">Seuil minimal</th>
             <th class="text-center">Qté Suggérée</th>
             <th class="text-end">Prix Unitaire</th>
             <th class="text-end">Coût Estimé</th>
@@ -2904,14 +2903,14 @@ window.exportTableAsPdf = async function(moduleType) {
         </thead>
         <tbody>
           ${list.map(a => {
-            const needed = Math.max(1, (a.max_stock || a.min_stock * 2) - a.stock);
+            const needed = Math.max(1, (a.min_stock * 2) - a.stock);
             const cost = needed * Number(a.unit_price || 0);
             return `<tr>
               <td class="fw-bold">${escHtml(a.code || '-')}</td>
               <td>${escHtml(a.name || '-')}</td>
               <td>${escHtml(a.supplier?.name || a.supplier_name || '-')}</td>
               <td class="text-center fw-bold text-danger">${a.stock ?? 0}</td>
-              <td class="text-center text-muted">${a.min_stock ?? 0} / ${a.max_stock ?? '-'}</td>
+              <td class="text-center text-muted">${a.min_stock ?? 0}</td>
               <td class="text-center fw-bold text-primary">${needed}</td>
               <td class="text-end">${formatCurrency(a.unit_price ?? 0)}</td>
               <td class="text-end fw-bold">${formatCurrency(cost)}</td>
@@ -3135,11 +3134,6 @@ function setupModalsAndActions() {
       await BackendApi.transitionRequest(AppState.selectedRequestRef, 'deliver');
     }
   });
-  document.getElementById('btnActionReceive')?.addEventListener('click', async () => {
-    if (AppState.selectedRequestRef && confirm('Confirmer la réception de la demande ?')) {
-      await BackendApi.transitionRequest(AppState.selectedRequestRef, 'receive');
-    }
-  });
   document.getElementById('btnActionReturn')?.addEventListener('click', async () => {
     if (AppState.selectedRequestRef && confirm(`Confirmer la restitution en stock du matériel pour ${AppState.selectedRequestRef} ?`)) {
       await BackendApi.returnRequest(AppState.selectedRequestRef);
@@ -3240,7 +3234,6 @@ function setupModalsAndActions() {
       const qty = parseInt(document.getElementById('artQty').value, 10);
       const threshold = Math.max(1, parseInt(document.getElementById('artThreshold').value, 10) || 1);
       const location = document.getElementById('artLocation').value.trim() || null;
-      const maximumThreshold = document.getElementById('artMaximumThreshold').value || null;
       const unitCost = document.getElementById('artUnitCost').value || null;
       const supplier = document.getElementById('artSupplier').value.trim() || null;
       const articleId = formNewArticle.dataset.articleId;
@@ -3249,7 +3242,7 @@ function setupModalsAndActions() {
       const res = await fetch(isEditing ? `/api/articles/${articleId}` : '/api/articles', {
         method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, maximum_threshold: maximumThreshold, unit_cost: unitCost, supplier, location })
+        body: JSON.stringify({ name, category: cat, unit, quantity: qty, threshold, unit_cost: unitCost, supplier, location })
       });
       const result = await res.json().catch(() => ({}));
       if (res.ok && result.success) {
@@ -4930,7 +4923,7 @@ const BackendApi = {
                 <td>${escHtml(art.unit)}</td>
                 <td class="small">${art.unit_cost ? formatCurrency(art.unit_cost) : '—'}</td>
                 <td class="fw-bold ${qtyClass}">${art.quantity}</td>
-                <td class="text-muted small">${art.threshold}${art.maximum_threshold ? ` / ${art.maximum_threshold}` : ''}</td>
+                <td class="text-muted small">${art.threshold}</td>
                 <td>${badgeHtml}</td>
                 <td class="text-end text-nowrap">
                   <button class="btn-gp-icon admin-only-feature" type="button" title="Modifier la fiche" onclick="openEditArticle(${art.id})"><i class="bi bi-pencil-square"></i></button>
