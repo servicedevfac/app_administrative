@@ -1679,13 +1679,13 @@ async function openPdfModal(reference) {
   }
 
   const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Administrative & Logistique';
-  const orgAddress = AppState.catalogRefs?.settings?.company_address || 'Abidjan, Côte d’Ivoire';
-  const orgPhone = AppState.catalogRefs?.settings?.company_phone || '';
+  const orgAddress = 'Nouveau CHU, Angré, Abidjan';
+  const orgPhone = '0707494772';
 
   const pdfOrgTitle = document.getElementById('pdfOrgTitle');
-  if (pdfOrgTitle) pdfOrgTitle.innerHTML = `<i class="bi bi-layers-half"></i> ${escHtml(orgName)}`;
+  if (pdfOrgTitle) pdfOrgTitle.textContent = orgName;
   const pdfOrgAddr = document.getElementById('pdfOrgAddressBlock');
-  if (pdfOrgAddr) pdfOrgAddr.textContent = [orgAddress, orgPhone].filter(Boolean).join(' • ');
+  if (pdfOrgAddr) pdfOrgAddr.textContent = `${orgAddress} • Tél : ${orgPhone}`;
   const stamp = document.getElementById('pdfStatusStamp');
   if (stamp) stamp.textContent = req.status.toUpperCase();
 

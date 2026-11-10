@@ -2788,17 +2788,14 @@
             <div class="pdf-header">
               <div>
                 <div class="d-flex align-items-center gap-2 mb-2">
-                  <div class="bg-primary text-white p-2 rounded fw-bold fs-5">
-                    <i class="bi bi-box-seam"></i>
-                  </div>
+                  <img src="/images/corporate-logo.jpg" alt="Logo Corporate" class="pdf-company-logo">
                   <div>
                     <h3 class="fw-bold mb-0 text-dark" style="font-size: 1.25rem;" id="pdfOrgTitle">GESTION+ ENTERPRISE</h3>
                     <small class="text-muted">Système centralisé de gestion interne des demandes, stocks & décharges</small>
                   </div>
                 </div>
                 <div class="small text-secondary" id="pdfOrgAddressBlock">
-                  Siège Social • Direction Générale • Service Logistique & Magasin Central<br>
-                  Tél : +225 27 20 00 00 00 • contact@entreprise.ci
+                  Nouveau CHU, Angré, Abidjan • Tél : 0707494772
                 </div>
               </div>
               <div class="text-end">

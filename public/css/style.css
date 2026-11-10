@@ -1581,6 +1581,14 @@ input[type="submit"].is-submitting {
   align-items: flex-start;
 }
 
+.pdf-company-logo {
+  width: 150px;
+  height: 57px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
 .pdf-signature-box {
   margin-top: 32px;
   border-top: 1px dashed #cbd5e1;
