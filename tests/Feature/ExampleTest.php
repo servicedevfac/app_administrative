@@ -653,12 +653,24 @@ class ExampleTest extends TestCase
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
 
-        $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/expenses', [
+        $headers = $this->authorizationHeaders($admin);
+        $response = $this->withHeaders($headers)->postJson('/api/expenses', [
             'disbursed_amount' => 25000,
             'justified_amount' => 23000,
         ])->assertCreated()
             ->assertJsonPath('data.disbursed_amount', '25000.00')
             ->assertJsonPath('data.justified_amount', '23000.00');
+
+        $expenseId = (int) $response->json('data.id');
+
+        $this->withHeaders($headers)->putJson("/api/expenses/{$expenseId}/validate")
+            ->assertUnprocessable()
+            ->assertInvalid(['disbursed_amount', 'justified_amount']);
+
+        $this->withHeaders($headers)->putJson("/api/expenses/{$expenseId}/validate", [
+            'disbursed_amount' => 25000,
+            'justified_amount' => 23000,
+        ])->assertOk()->assertJsonPath('data.status', 'Validé');
 
         $this->assertDatabaseHas('expenses', [
             'authorized_amount' => 25000,

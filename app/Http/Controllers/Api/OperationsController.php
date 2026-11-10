@@ -802,6 +802,10 @@ class OperationsController extends Controller
             unset($validated['amendment_reason']);
 
             $expense->fill($validated);
+            if (array_key_exists('disbursed_amount', $validated)) {
+                $expense->authorized_amount = $validated['disbursed_amount'];
+                $expense->committed_amount = $validated['disbursed_amount'];
+            }
             $overrun = (float) $expense->committed_amount > (float) $expense->authorized_amount
                 || (float) $expense->disbursed_amount > (float) $expense->authorized_amount;
 
@@ -846,18 +850,19 @@ class OperationsController extends Controller
     public function validateExpense(Request $request, Expense $expense): JsonResponse
     {
         $validated = $request->validate([
-            'authorized_amount' => ['required', 'numeric', 'min:0'],
-            'notes' => ['nullable', 'string'],
+            'disbursed_amount' => ['required', 'numeric', 'min:0'],
+            'justified_amount' => ['required', 'numeric', 'min:0'],
         ]);
 
         $before = $expense->only(['authorized_amount', 'committed_amount', 'disbursed_amount', 'justified_amount', 'status']);
-        $newAuthorized = (float) $validated['authorized_amount'];
-        $stillOver = (float) $expense->committed_amount > $newAuthorized || (float) $expense->disbursed_amount > $newAuthorized;
+        $disbursed = (float) $validated['disbursed_amount'];
 
         $expense->update([
-            'authorized_amount' => $newAuthorized,
-            'notes' => $validated['notes'] ?? $expense->notes,
-            'status' => $stillOver ? 'Nouvelle validation requise' : 'Validé',
+            'authorized_amount' => $disbursed,
+            'committed_amount' => $disbursed,
+            'disbursed_amount' => $disbursed,
+            'justified_amount' => $validated['justified_amount'],
+            'status' => 'Validé',
             'validated_by' => $request->user()->id,
             'validated_at' => now(),
         ]);
@@ -868,12 +873,12 @@ class OperationsController extends Controller
             'action' => 'validated',
             'before_state' => $before,
             'after_state' => $expense->only(['authorized_amount', 'committed_amount', 'disbursed_amount', 'justified_amount', 'status']),
-            'reason' => $validated['notes'] ?? 'Contrôle et validation financière.',
+            'reason' => 'Contrôle des montants décaissé et justifié.',
         ]);
 
         $this->recordActivity($request, 'expense.validated', $expense, "Dépense {$expense->reference} contrôlée/validée par {$request->user()->name}.", [
             'before' => $before,
-            'after' => $expense->only(['authorized_amount', 'status']),
+            'after' => $expense->only(['disbursed_amount', 'justified_amount', 'status']),
         ]);
 
         return response()->json([

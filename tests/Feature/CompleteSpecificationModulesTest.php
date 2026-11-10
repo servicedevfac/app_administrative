@@ -469,8 +469,8 @@ class CompleteSpecificationModulesTest extends TestCase
 
         // Contrôle et validation financière -> Statut Validé
         $this->withHeaders($headers)->putJson("/api/expenses/{$expenseId}/validate", [
-            'authorized_amount' => 200000,
-            'notes' => 'Pièces justificatives conformes.',
+            'disbursed_amount' => 195000,
+            'justified_amount' => 195000,
         ])->assertOk()
             ->assertJsonPath('data.status', 'Validé');
 

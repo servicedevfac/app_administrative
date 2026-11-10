@@ -854,11 +854,11 @@
               <form id="formNewExpense" class="row g-3" data-permission="expenses.manage" enctype="multipart/form-data">
                 <div class="col-12 col-md-5">
                   <label class="form-label small fw-semibold">Montant décaissé <span class="text-danger">*</span></label>
-                  <input name="disbursed_amount" type="number" min="0" step="0.01" value="0" class="form-control" required>
+                  <input name="disbursed_amount" type="number" min="0" step="0.01" class="form-control" placeholder="Saisir le montant décaissé" required>
                 </div>
                 <div class="col-12 col-md-5">
                   <label class="form-label small fw-semibold">Montant justifié <span class="text-danger">*</span></label>
-                  <input name="justified_amount" type="number" min="0" step="0.01" value="0" class="form-control" required>
+                  <input name="justified_amount" type="number" min="0" step="0.01" class="form-control" placeholder="Saisir le montant justifié" required>
                 </div>
                 <div class="col-12 col-md-2 d-flex align-items-end">
                   <button class="btn-gp-primary w-100 justify-content-center" type="submit"><i class="bi bi-plus-lg"></i> Enregistrer</button>
@@ -888,10 +888,8 @@
                       <th>Référence</th>
                       <th>Rattachement</th>
                       <th>Fournisseur / Bénéficiaire</th>
-                      <th>Autorisé</th>
-                      <th>Engagé / Décaissé</th>
-                      <th>Justifié / Reste</th>
-                      <th>Solde</th>
+                      <th>Décaissé</th>
+                      <th>Justifié</th>
                       <th>Statut</th>
                       <th class="text-end">Actions</th>
                     </tr>

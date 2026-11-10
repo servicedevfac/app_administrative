@@ -2388,16 +2388,8 @@ window.openExpenseModal = function (expenseId, mode = 'detail') {
     bodyEl.innerHTML = `
       ${isProtected ? '<div class="alert alert-warning py-2 small"><i class="bi bi-shield-lock me-1"></i>Cette dépense est déjà validée. Toute révision requiert un motif explicite et sera tracée dans l’historique financier.</div>' : ''}
       <form id="dynFormUpdateExpense" class="row g-3">
-        <div class="col-md-4"><label class="form-label small fw-semibold">Montant autorisé</label><div class="form-control bg-light fw-bold">${formatCurrency(exp.authorized_amount)}</div></div>
-        <div class="col-md-4"><label class="form-label small fw-semibold">Montant engagé</label><input type="number" step="0.01" min="0" name="committed_amount" class="form-control" value="${exp.committed_amount || 0}"></div>
-        <div class="col-md-4"><label class="form-label small fw-semibold">Montant décaissé</label><input type="number" step="0.01" min="0" name="disbursed_amount" class="form-control" value="${exp.disbursed_amount || 0}"></div>
-        <div class="col-md-4"><label class="form-label small fw-semibold">Montant justifié</label><input type="number" step="0.01" min="0" name="justified_amount" class="form-control" value="${exp.justified_amount || 0}"></div>
-        <div class="col-md-4"><label class="form-label small fw-semibold">Bénéficiaire</label><input name="beneficiary" class="form-control" value="${escHtml(exp.beneficiary || '')}"></div>
-        <div class="col-md-4"><label class="form-label small fw-semibold">Mode de paiement</label>
-          <select name="payment_method" class="form-select">
-            ${['Espèces', 'Virement bancaire', 'Chèque', 'Mobile Money', 'Carte entreprise'].map(m => `<option value="${m}" ${exp.payment_method === m ? 'selected' : ''}>${m}</option>`).join('')}
-          </select>
-        </div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Montant décaissé <span class="text-danger">*</span></label><input type="number" step="0.01" min="0" name="disbursed_amount" class="form-control" value="${exp.disbursed_amount || 0}" required></div>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Montant justifié <span class="text-danger">*</span></label><input type="number" step="0.01" min="0" name="justified_amount" class="form-control" value="${exp.justified_amount || 0}" required></div>
         <div class="col-12"><label class="form-label small fw-semibold">Motif de mise à jour / révision ${isProtected ? '<span class="text-danger">*</span>' : ''}</label>
           <input name="amendment_reason" class="form-control" ${isProtected ? 'required' : ''} placeholder="Ex: Réception facture définitive, décaissement solde fournisseur...">
         </div>
@@ -2415,18 +2407,14 @@ window.openExpenseModal = function (expenseId, mode = 'detail') {
       if (res.ok) { bootstrap.Modal.getInstance(modalEl)?.hide(); await BackendApi.loadOperations(); }
     };
   } else if (mode === 'validate') {
-    const suggestedAuth = Math.max(Number(exp.authorized_amount || 0), Number(exp.committed_amount || 0), Number(exp.disbursed_amount || 0));
     if (titleEl) titleEl.textContent = `Contrôle & Validation financière — ${exp.reference}`;
     bodyEl.innerHTML = `
       <form id="dynFormValidateExpense" class="row g-3">
-        <div class="col-12">
-          <p class="small text-muted mb-1">Engagé : <strong>${formatCurrency(exp.committed_amount)}</strong> • Décaissé : <strong>${formatCurrency(exp.disbursed_amount)}</strong> • Justifié : <strong>${formatCurrency(exp.justified_amount)}</strong></p>
+        <div class="col-md-6"><label class="form-label small fw-semibold">Montant décaissé <span class="text-danger">*</span></label>
+          <input type="number" step="0.01" min="0" name="disbursed_amount" class="form-control fw-bold" placeholder="Saisir le montant décaissé" required>
         </div>
-        <div class="col-md-6"><label class="form-label small fw-semibold">Plafond / Montant autorisé validé <span class="text-danger">*</span></label>
-          <input type="number" step="0.01" min="0" name="authorized_amount" class="form-control fw-bold" value="${suggestedAuth}" required>
-        </div>
-        <div class="col-md-6"><label class="form-label small fw-semibold">Observation de contrôle</label>
-          <input name="notes" class="form-control" placeholder="Visa conforme des pièces et montants">
+        <div class="col-md-6"><label class="form-label small fw-semibold">Montant justifié <span class="text-danger">*</span></label>
+          <input type="number" step="0.01" min="0" name="justified_amount" class="form-control fw-bold" placeholder="Saisir le montant justifié" required>
         </div>
         <div class="col-12 d-flex justify-content-end gap-2">
           <button type="button" class="btn-gp-secondary" data-bs-dismiss="modal">Annuler</button>
@@ -4485,7 +4473,7 @@ const BackendApi = {
     const tbody = document.getElementById('expensesTableBody');
     if (!tbody) return;
     if (!expenses.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">Aucune dépense enregistrée.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucune dépense enregistrée.</td></tr>';
       return;
     }
 
@@ -4502,10 +4490,8 @@ const BackendApi = {
             <div class="text-muted">${escHtml(exp.payment_method || '')}</div>
           </td>
           <td class="small"><strong>${escHtml(exp.supplier?.name || exp.beneficiary || '—')}</strong>${exp.supplier && exp.beneficiary ? `<div class="text-muted">${escHtml(exp.beneficiary)}</div>` : ''}</td>
-          <td class="fw-semibold">${formatCurrency(exp.authorized_amount)}</td>
-          <td class="small">Eng: ${formatCurrency(exp.committed_amount)}<div class="fw-semibold text-dark">Déc: ${formatCurrency(exp.disbursed_amount)}</div></td>
-          <td class="small">Just: ${formatCurrency(exp.justified_amount)}<div class="${toJustify > 0 ? 'text-danger fw-semibold' : 'text-success'}">Reste: ${formatCurrency(toJustify)}</div></td>
-          <td class="fw-semibold">${formatCurrency(exp.remaining_amount)}</td>
+          <td class="fw-semibold text-dark">${formatCurrency(exp.disbursed_amount)}</td>
+          <td class="fw-semibold text-success">${formatCurrency(exp.justified_amount)}</td>
           <td><span class="badge ${isOverrun ? 'bg-danger' : (exp.status === 'Validé' ? 'bg-success-subtle text-success border' : 'bg-warning-subtle text-warning-emphasis border')}">${escHtml(exp.status)}</span></td>
           <td class="text-end text-nowrap">
             ${hasAnyPermission('expenses.manage') ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="Suivi montants / Décaisser" onclick="openExpenseModal(${exp.id}, 'edit')"><i class="bi bi-pencil-square"></i></button>` : ''}
