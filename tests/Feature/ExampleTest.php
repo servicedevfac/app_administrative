@@ -642,10 +642,30 @@ class ExampleTest extends TestCase
             'authorized_amount' => 100000,
             'committed_amount' => 125000,
             'disbursed_amount' => 0,
+            'justified_amount' => 0,
         ])->assertCreated()->assertJsonPath('data.status', 'Nouvelle validation requise');
 
         $expense = Expense::firstOrFail();
         $this->assertTrue($expense->requires_reapproval);
+    }
+
+    public function test_expense_can_be_created_with_disbursed_and_justified_amounts_only(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->withHeaders($this->authorizationHeaders($admin))->postJson('/api/expenses', [
+            'disbursed_amount' => 25000,
+            'justified_amount' => 23000,
+        ])->assertCreated()
+            ->assertJsonPath('data.disbursed_amount', '25000.00')
+            ->assertJsonPath('data.justified_amount', '23000.00');
+
+        $this->assertDatabaseHas('expenses', [
+            'authorized_amount' => 25000,
+            'committed_amount' => 25000,
+            'disbursed_amount' => 25000,
+            'justified_amount' => 23000,
+        ]);
     }
 
     public function test_validated_inventory_adjusts_stock_with_a_traced_movement(): void

@@ -3114,13 +3114,6 @@ window.deleteDocument = async function (docId, docTitle) {
 };
 
 function setupModalsAndActions() {
-  document.getElementById('btnMarkAllNotificationsRead')?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    await fetch('/api/notifications/read-all', { method: 'PUT' });
-    await BackendApi.loadNotifications();
-    showToast('Notifications marquées comme lues.', 'info');
-  });
-
   document.getElementById('btnOpenReplenishmentModal')?.addEventListener('click', openReplenishmentModal);
   document.getElementById('btnOpenLoginHistoryModal')?.addEventListener('click', openAllLoginHistoryModal);
   document.getElementById('btnOpenCreateUserModal')?.addEventListener('click', resetUserModalMode);
@@ -4099,7 +4092,7 @@ function setupOperationsCenter() {
     if (res.ok) { form.reset(); await BackendApi.loadOperations(); }
   });
 
-  // Création Dépense (FormData pour supporter les pièces justificatives multiples + autorisation directe auto)
+  // Création d'une dépense depuis le formulaire simplifié.
   document.getElementById('formNewExpense')?.addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -4278,8 +4271,7 @@ const BackendApi = {
         this.loadCatalogReferences(),
         this.loadArticles(),
         this.loadRequests(),
-        this.loadDashboard(),
-        this.loadNotifications()
+        this.loadDashboard()
       ];
 
       if (AppState.canManageOps) {
@@ -4621,51 +4613,6 @@ const BackendApi = {
       }
     } catch (e) {
       console.warn('loadReport error:', e);
-    }
-  },
-
-  async loadNotifications() {
-    try {
-      const response = await fetch(`${this.baseUrl}/notifications`);
-      if (!response.ok) return;
-      const result = await response.json();
-      const notifications = result.data || [];
-      const unreadCount = Number(result.unread_count ?? notifications.filter(n => !n.read_at).length);
-
-      const countEl = document.getElementById('notifCountBadge');
-      const dotEl = document.getElementById('topbarNotifDot');
-      if (countEl) countEl.textContent = unreadCount;
-      if (dotEl) dotEl.style.display = unreadCount > 0 ? 'block' : 'none';
-
-      const dropdown = document.getElementById('notificationsDropdown');
-      if (!dropdown) return;
-      dropdown.querySelectorAll('.notification-item, .notification-empty-state').forEach(item => item.remove());
-      if (!notifications.length) {
-        dropdown.insertAdjacentHTML('beforeend', '<li class="p-3 text-center text-muted small notification-empty-state"><i class="bi bi-bell-slash me-1"></i> Aucune notification</li>');
-        return;
-      }
-      notifications.slice(0, 12).forEach(notification => {
-        const item = document.createElement('li');
-        item.className = `notification-item p-2 border-bottom small ${notification.read_at ? 'text-muted' : 'bg-primary-subtle'}`;
-        item.innerHTML = `
-          <button type="button" class="btn text-start p-0 w-100">
-            <strong class="d-block text-dark">${escHtml(notification.title)}</strong>
-            <span>${escHtml(notification.message)}</span>
-            <small class="d-block mt-1 text-muted">${formatDateTime(notification.created_at)}</small>
-          </button>`;
-        item.querySelector('button').addEventListener('click', async () => {
-          if (!notification.read_at) {
-            await fetch(`${this.baseUrl}/notifications/${notification.id}/read`, { method: 'PUT' });
-          }
-          await this.loadNotifications();
-          if (notification.link && notification.link.startsWith('#')) {
-            window.location.hash = notification.link.slice(1);
-          }
-        });
-        dropdown.appendChild(item);
-      });
-    } catch (e) {
-      console.warn('loadNotifications error:', e);
     }
   },
 

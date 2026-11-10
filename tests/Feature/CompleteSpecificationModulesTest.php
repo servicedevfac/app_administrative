@@ -445,6 +445,7 @@ class CompleteSpecificationModulesTest extends TestCase
         $this->withHeaders($headers)->postJson('/api/expenses', [
             'authorized_amount' => 150000,
             'beneficiary' => 'Prestataire Externe',
+            'disbursed_amount' => 150000,
         ])->assertStatus(422);
 
         // Création avec autorisation directe auto-générée AUT-YYYY-xxxxx + référence DEP-YYYY-xxxxx

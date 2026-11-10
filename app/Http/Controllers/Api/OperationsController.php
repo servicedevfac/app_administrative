@@ -702,10 +702,10 @@ class OperationsController extends Controller
             'supplier_id' => ['nullable', 'exists:suppliers,id'],
             'beneficiary' => ['nullable', 'string', 'max:255'],
             'estimated_amount' => ['nullable', 'numeric', 'min:0'],
-            'authorized_amount' => ['required', 'numeric', 'min:0'],
+            'authorized_amount' => ['nullable', 'numeric', 'min:0'],
             'committed_amount' => ['nullable', 'numeric', 'min:0'],
-            'disbursed_amount' => ['nullable', 'numeric', 'min:0'],
-            'justified_amount' => ['nullable', 'numeric', 'min:0'],
+            'disbursed_amount' => ['required', 'numeric', 'min:0'],
+            'justified_amount' => ['required', 'numeric', 'min:0'],
             'payment_method' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'overrun_reason' => ['nullable', 'string'],
@@ -715,20 +715,14 @@ class OperationsController extends Controller
             'attachment_type' => ['nullable', 'string', 'max:60'],
         ]);
 
-        $useDirectAuth = $request->boolean('direct_authorization');
-
-        if (empty($validated['material_request_id']) && empty($validated['authorization_reference']) && ! $useDirectAuth) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Une dépense doit obligatoirement être rattachée à une demande ou à une autorisation directe.',
-            ], 422);
-        }
+        $useDirectAuth = $request->boolean('direct_authorization')
+            || (empty($validated['material_request_id']) && empty($validated['authorization_reference']));
 
         $expense = DB::transaction(function () use ($request, $validated, $useDirectAuth): Expense {
             $nextNumber = (int) Expense::query()->lockForUpdate()->max('id') + 1;
-            $committed = (float) ($validated['committed_amount'] ?? 0);
-            $disbursed = (float) ($validated['disbursed_amount'] ?? 0);
-            $authorized = (float) $validated['authorized_amount'];
+            $disbursed = (float) $validated['disbursed_amount'];
+            $committed = (float) ($validated['committed_amount'] ?? $disbursed);
+            $authorized = (float) ($validated['authorized_amount'] ?? $disbursed);
             $isOverrun = $committed > $authorized || $disbursed > $authorized;
 
             $payload = collect($validated)->except(['attachment', 'attachments', 'attachment_type', 'direct_authorization'])->all();
@@ -738,9 +732,10 @@ class OperationsController extends Controller
             $expense = Expense::create(array_merge($payload, [
                 'reference' => 'DEP-'.now()->format('Y').'-'.str_pad((string) $nextNumber, 5, '0', STR_PAD_LEFT),
                 'estimated_amount' => $validated['estimated_amount'] ?? $authorized,
+                'authorized_amount' => $authorized,
                 'committed_amount' => $committed,
                 'disbursed_amount' => $disbursed,
-                'justified_amount' => $validated['justified_amount'] ?? 0,
+                'justified_amount' => $validated['justified_amount'],
                 'status' => $isOverrun ? 'Nouvelle validation requise' : 'Autorisé',
                 'created_by' => $request->user()->id,
             ]));

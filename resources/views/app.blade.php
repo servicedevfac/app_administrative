@@ -126,22 +126,6 @@
             <span id="topbarActiveRoleText">Profil : Administrateur</span>
           </div>
 
-          <!-- Notification Bell -->
-          <div class="btn-icon-topbar" title="Notifications" data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="bi bi-bell"></i>
-            <span class="badge-dot-alert" id="topbarNotifDot" style="display: none;"></span>
-          </div>
-          <!-- Menu dropdown notifications -->
-          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 p-2" id="notificationsDropdown" style="width: 350px; max-height: 440px; overflow:auto;">
-            <li class="px-2 py-1 fw-bold text-dark border-bottom mb-2 d-flex justify-content-between align-items-center gap-2">
-              <span>Notifications <span class="badge bg-secondary-subtle text-secondary ms-1" id="notifCountBadge">0</span></span>
-              <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" id="btnMarkAllNotificationsRead" style="font-size: 0.75rem;">Tout marquer lu</button>
-            </li>
-            <li class="p-3 text-center text-muted small notification-empty-state">
-              <i class="bi bi-bell-slash me-1"></i> Aucune nouvelle notification
-            </li>
-          </ul>
-
           <!-- User Profile Chip with Dropdown -->
           <div class="dropdown">
             <div class="user-profile-badge" data-bs-toggle="dropdown" aria-expanded="false" style="cursor:pointer;">
@@ -868,74 +852,15 @@
                 </div>
               </div>
               <form id="formNewExpense" class="row g-3" data-permission="expenses.manage" enctype="multipart/form-data">
-                <div class="col-12 col-md-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Demande rattachée</label>
-                  <select name="material_request_id" id="expenseRequestSelect" class="form-select">
-                    <option value="">Sélectionner une demande…</option>
-                  </select>
-                  <div class="form-check mt-1">
-                    <input class="form-check-input" type="checkbox" name="direct_authorization" value="1" id="checkDirectExpenseAuth">
-                    <label class="form-check-label small text-muted" for="checkDirectExpenseAuth">Autorisation directe (sans demande préalable)</label>
-                  </div>
-                </div>
-                <div class="col-12 col-md-6 col-lg-3">
-                  <label class="form-label small fw-semibold">Fournisseur</label>
-                  <select name="supplier_id" id="expenseSupplierSelect" class="form-select">
-                    <option value="">Aucun / Bénéficiaire interne</option>
-                  </select>
-                </div>
-                <div class="col-12 col-md-6 col-lg-3">
-                  <label class="form-label small fw-semibold">Bénéficiaire du paiement</label>
-                  <input name="beneficiary" class="form-control" placeholder="Nom de l'agent ou prestataire">
-                </div>
-                <div class="col-12 col-md-6 col-lg-2">
-                  <label class="form-label small fw-semibold">Mode de paiement</label>
-                  <select name="payment_method" class="form-select">
-                    <option value="Espèces">Espèces / Caisse</option>
-                    <option value="Virement bancaire">Virement bancaire</option>
-                    <option value="Chèque">Chèque</option>
-                    <option value="Mobile Money">Mobile Money</option>
-                    <option value="Carte entreprise">Carte entreprise</option>
-                  </select>
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Montant estimatif</label>
-                  <input name="estimated_amount" type="number" min="0" step="0.01" class="form-control" placeholder="0">
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Montant autorisé <span class="text-danger">*</span></label>
-                  <input name="authorized_amount" type="number" min="0" step="0.01" class="form-control" required placeholder="0">
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Montant engagé</label>
-                  <input name="committed_amount" type="number" min="0" step="0.01" value="0" class="form-control">
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Montant décaissé</label>
-                  <input name="disbursed_amount" type="number" min="0" step="0.01" value="0" class="form-control">
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Montant justifié</label>
-                  <input name="justified_amount" type="number" min="0" step="0.01" value="0" class="form-control">
-                </div>
-                <div class="col-12 col-sm-6 col-lg-4">
-                  <label class="form-label small fw-semibold">Type justificatif</label>
-                  <select name="attachment_type" class="form-select">
-                    <option value="Facture">Facture</option>
-                    <option value="Reçu">Reçu de paiement</option>
-                    <option value="Bon de livraison">Bon de livraison</option>
-                    <option value="Devis">Devis</option>
-                  </select>
+                <div class="col-12 col-md-5">
+                  <label class="form-label small fw-semibold">Montant décaissé <span class="text-danger">*</span></label>
+                  <input name="disbursed_amount" type="number" min="0" step="0.01" value="0" class="form-control" required>
                 </div>
                 <div class="col-12 col-md-5">
-                  <label class="form-label small fw-semibold">Pièces justificatives (Facture, Reçu, BL — optionnel)</label>
-                  <input type="file" name="attachments[]" class="form-control" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
+                  <label class="form-label small fw-semibold">Montant justifié <span class="text-danger">*</span></label>
+                  <input name="justified_amount" type="number" min="0" step="0.01" value="0" class="form-control" required>
                 </div>
-                <div class="col-12 col-md-4">
-                  <label class="form-label small fw-semibold">Observations / Motif</label>
-                  <input name="notes" class="form-control" placeholder="Détails sur l'engagement ou le règlement">
-                </div>
-                <div class="col-12 col-md-3 d-flex align-items-end">
+                <div class="col-12 col-md-2 d-flex align-items-end">
                   <button class="btn-gp-primary w-100 justify-content-center" type="submit"><i class="bi bi-plus-lg"></i> Enregistrer</button>
                 </div>
               </form>
