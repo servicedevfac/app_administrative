@@ -1331,31 +1331,6 @@ async function openRequestDetail(reference) {
     subtitle.innerHTML = `Créée le ${escHtml(createdDate)} par <strong id="detailDemandeurName">${escHtml(dName)}</strong> (${escHtml(dService)})`;
   }
 
-  // Alerte motif rejet / complément / annulation
-  const reasonAlert = document.getElementById('detailDecisionReasonAlert');
-  const reasonTitle = document.getElementById('detailDecisionReasonTitle');
-  const reasonBody = document.getElementById('detailDecisionReasonBody');
-  if (reasonAlert && reasonTitle && reasonBody) {
-    if (req.status === 'Rejetée' && req.rejection_reason) {
-      reasonAlert.className = 'alert alert-danger mb-3';
-      reasonAlert.style.display = 'block';
-      reasonTitle.textContent = 'Motif du rejet :';
-      reasonBody.textContent = req.rejection_reason;
-    } else if (req.correction_reason) {
-      reasonAlert.className = 'alert alert-warning mb-3';
-      reasonAlert.style.display = 'block';
-      reasonTitle.textContent = 'Complément d’information demandé :';
-      reasonBody.textContent = req.correction_reason;
-    } else if (req.status === 'Rejetée' && req.cancellation_reason) {
-      reasonAlert.className = 'alert alert-secondary mb-3';
-      reasonAlert.style.display = 'block';
-      reasonTitle.textContent = 'Motif de l’annulation :';
-      reasonBody.textContent = req.cancellation_reason;
-    } else {
-      reasonAlert.style.display = 'none';
-    }
-  }
-
   const setElText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   setElText('detailRequestCategory', req.category || 'Autres besoins administratifs et logistiques');
   setElText('detailRequestAssignee', req.assignee?.name ? `${req.assignee.name} (${req.assignee.service || 'Agent'})` : 'Non affectée');

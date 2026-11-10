@@ -1548,15 +1548,6 @@
             </div>
           </div>
 
-          <!-- Alerte motif rejet / complément / annulation -->
-          <div class="alert alert-warning border d-flex align-items-start gap-2 mb-3" id="detailDecisionReasonAlert" style="display:none;">
-            <i class="bi bi-exclamation-circle-fill fs-5 mt-1"></i>
-            <div>
-              <strong id="detailDecisionReasonTitle">Observation du circuit :</strong>
-              <div id="detailDecisionReasonBody" class="small">-</div>
-            </div>
-          </div>
-
           <!-- Onglets de détail -->
           <div class="custom-tabs-nav">
             <button class="tab-nav-btn active" data-detail-tab="info">Informations</button>
