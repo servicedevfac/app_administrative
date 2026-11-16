@@ -238,11 +238,11 @@ function endWriteActivity(control) {
 }
 
 function getAuthToken() {
-  return sessionStorage.getItem('gestion_token') || localStorage.getItem('gestion_token') || '';
+  return sessionStorage.getItem('gestion_token') || '';
 }
 
 function getStoredUser() {
-  const raw = sessionStorage.getItem('gestion_user') || localStorage.getItem('gestion_user');
+  const raw = sessionStorage.getItem('gestion_user');
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -254,12 +254,12 @@ function getStoredUser() {
 function setAuthSession(user, token) {
   if (token) {
     sessionStorage.setItem('gestion_token', token);
-    localStorage.setItem('gestion_token', token);
+    localStorage.removeItem('gestion_token');
   }
   if (user) {
     const raw = typeof user === 'string' ? user : JSON.stringify(user);
     sessionStorage.setItem('gestion_user', raw);
-    localStorage.setItem('gestion_user', raw);
+    localStorage.removeItem('gestion_user');
   }
 }
 
