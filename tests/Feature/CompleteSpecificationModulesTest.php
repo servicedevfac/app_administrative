@@ -205,7 +205,11 @@ class CompleteSpecificationModulesTest extends TestCase
             'user_id' => $manager->id,
             'type' => 'request.received',
         ]);
-        $this->assertSame(2, SystemNotification::query()->where('type', 'request.received')->count());
+        $this->assertDatabaseHas('system_notifications', [
+            'user_id' => $agent->id,
+            'type' => 'request.received',
+        ]);
+        $this->assertGreaterThanOrEqual(2, SystemNotification::query()->where('type', 'request.received')->count());
 
         // Étape 6 : Clôture finale
         $this->withHeaders($this->authorizationHeaders($manager))

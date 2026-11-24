@@ -1027,7 +1027,7 @@ class MaterialRequestController extends Controller
 <style>body{font-family:Arial,sans-serif;padding:32px;color:#1e293b}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #cbd5e1;padding:8px 12px;text-align:left}th{background:#f8fafc}</style>
 </head>
 <body>
-<h2>GESTION+ — BON DE VALIDATION & DÉCHARGE</h2>
+<h2>GestADD — BON DE VALIDATION & DÉCHARGE</h2>
 <p><strong>Référence :</strong> {$ref} | <strong>Date :</strong> {$date}</p>
 <p><strong>Demandeur :</strong> {$requester} ({$service}) | <strong>Catégorie :</strong> {$category}</p>
 <p><strong>Motif :</strong> {$motif} | <strong>Validé par :</strong> {$approver}</p>

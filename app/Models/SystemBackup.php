@@ -83,7 +83,7 @@ class SystemBackup extends Model
         $filename = $reference.'_'.now()->format('Ymd_His').'.json';
         $filePath = "backups/{$filename}";
         $json = json_encode([
-            'app' => 'GESTION+',
+            'app' => 'GestADD',
             'reference' => $reference,
             'generated_at' => now()->toIso8601String(),
             'generated_by' => $creator?->email ?? 'system@scheduler',

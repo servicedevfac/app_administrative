@@ -192,7 +192,7 @@ return new class extends Migration
         ]);
 
         DB::table('system_settings')->insertOrIgnore([
-            ['key' => 'company_name', 'value' => 'GESTION+ ENTERPRISE - SIÈGE SOCIAL', 'group' => 'general', 'created_at' => $now, 'updated_at' => $now],
+            ['key' => 'company_name', 'value' => 'GestADD - SIÈGE SOCIAL', 'group' => 'general', 'created_at' => $now, 'updated_at' => $now],
             ['key' => 'company_short_code', 'value' => 'GP-ENT', 'group' => 'general', 'created_at' => $now, 'updated_at' => $now],
             ['key' => 'company_address', 'value' => "Plateau, Immeuble Horizon, Abidjan - Côte d'Ivoire", 'group' => 'general', 'created_at' => $now, 'updated_at' => $now],
             ['key' => 'company_phone', 'value' => '+225 27 20 00 00 00', 'group' => 'general', 'created_at' => $now, 'updated_at' => $now],

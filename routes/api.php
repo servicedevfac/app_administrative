@@ -37,7 +37,7 @@ Route::get('/health', function () {
 
     return response()->json([
         'status' => $dbConnected ? 'online' : 'degraded',
-        'app' => 'GESTION+ Enterprise Backend',
+        'app' => 'GestADD Backend',
         'database_connected' => $dbConnected,
         'has_users' => $hasUsers,
         'database_driver' => config('database.default'),

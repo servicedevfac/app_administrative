@@ -114,7 +114,7 @@ class ReportController extends Controller
             $output = fopen('php://output', 'wb');
             fwrite($output, "\xEF\xBB\xBF");
 
-            fputcsv($output, ['RAPPORT CONSOLIDÉ DE GESTION INTERNE — GESTION+'], ';');
+            fputcsv($output, ['RAPPORT CONSOLIDÉ DE GESTION INTERNE — GestADD'], ';');
             fputcsv($output, ['Période', $from->format('d/m/Y').' au '.$to->format('d/m/Y'), 'Généré le', now()->format('d/m/Y H:i')], ';');
             fputcsv($output, [], ';');
 

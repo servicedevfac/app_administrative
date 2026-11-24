@@ -1678,7 +1678,7 @@ async function openPdfModal(reference) {
     return false;
   }
 
-  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Administrative & Logistique';
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GestADD — Direction Administrative & Logistique';
   const orgAddress = 'Nouveau CHU, Angré, Abidjan';
   const orgPhone = '0707494772';
 
@@ -2492,7 +2492,7 @@ window.openExpenseModal = function (expenseId, mode = 'detail') {
    7. Module 7 : Aperçu Officiel & Impression A4 des Rapports
    ========================================================================== */
 function renderPrintableReportHtml(reportMeta, snapshot) {
-  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Générale & Administration';
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GestADD — Direction Générale & Administration';
   const statusRows = Object.entries(snapshot.requests_by_status || {})
     .map(([st, cnt]) => `<tr><td>${escHtml(st)}</td><td class="text-end fw-bold">${cnt}</td></tr>`)
     .join('') || '<tr><td colspan="2" class="text-muted">Aucune demande sur la période</td></tr>';
@@ -2540,7 +2540,7 @@ function renderPrintableReportHtml(reportMeta, snapshot) {
       </div>` : ''}
 
     <div class="small text-muted border-top pt-2 d-flex justify-content-between">
-      <span>Document généré par GESTION+ le ${formatDateTime(reportMeta.created_at || new Date())}</span>
+      <span>Document généré par GestADD le ${formatDateTime(reportMeta.created_at || new Date())}</span>
       <span>Visa Responsable Administratif / Direction Générale</span>
     </div>
   `;
@@ -2585,7 +2585,7 @@ window.exportTableAsPdf = async function(moduleType) {
   const container = document.getElementById('printableReportDocument');
   if (!container) return;
 
-  const orgName = AppState.catalogRefs?.settings?.company_name || 'GESTION+ — Direction Générale & Administration';
+  const orgName = AppState.catalogRefs?.settings?.company_name || 'GestADD — Direction Générale & Administration';
   const nowStr = formatDateTime(new Date());
   let title = '';
   let refCode = '';
@@ -2937,7 +2937,7 @@ window.exportTableAsPdf = async function(moduleType) {
       ${tableHtml}
     </div>
     <div class="small text-muted border-top pt-2 d-flex justify-content-between">
-      <span>Document officiel extrait de GESTION+ le ${escHtml(nowStr)}</span>
+      <span>Document officiel extrait de GestADD le ${escHtml(nowStr)}</span>
       <span>Visa Responsable Administratif / Direction Générale</span>
     </div>
   `;
@@ -3437,7 +3437,7 @@ function setupModalsAndActions() {
     const printableReport = document.getElementById('printableReportDocument');
     if (!printableReport) return;
     const previousTitle = document.title;
-    document.title = printableReport.dataset.reference || 'Rapport_GESTION+';
+    document.title = printableReport.dataset.reference || 'Rapport_GestADD';
     document.body.classList.add('printing-report');
     const cleanup = () => {
       document.title = previousTitle;

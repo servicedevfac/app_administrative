@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GESTION+ | Logiciel de Gestion des Stocks, Demandes & Documents</title>
+  <title>GestADD | Logiciel de Gestion des Stocks, Demandes & Documents</title>
   
   <!-- Polices Google : Plus Jakarta Sans & Inter (Rendu naturel et typographie d'entreprise) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,7 +43,7 @@
           <div class="brand-icon">
             <i class="bi bi-box-seam"></i>
           </div>
-          <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+          <span class="brand-text">Gest<span class="text-primary">ADD</span></span>
         </a>
       </div>
 
@@ -2587,7 +2587,7 @@
           <div>
             <div class="d-flex align-items-center gap-2 mb-4">
               <div class="brand-icon"><i class="bi bi-box-seam"></i></div>
-              <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+              <span class="brand-text">Gest<span class="text-primary">ADD</span></span>
             </div>
             <h2 class="fs-4 fw-bold text-white mb-2">Rejoignez l'espace collaborateur</h2>
             <p class="text-secondary small">Simplifiez la gestion de vos demandes internes, le suivi des stocks et l'archivage de vos documents administratifs.</p>
@@ -2708,14 +2708,14 @@
           <div>
             <div class="d-flex align-items-center gap-2 mb-4">
               <div class="brand-icon"><i class="bi bi-box-seam"></i></div>
-              <span class="brand-text">GESTION<span class="text-primary">+</span></span>
+              <span class="brand-text">Gest<span class="text-primary">ADD</span></span>
             </div>
             <h2 class="fs-4 fw-bold text-white mb-2">Espace collaborateur</h2>
             <p class="text-secondary small">Connectez-vous pour gérer vos demandes internes, consulter les stocks et accéder aux opérations de votre service.</p>
           </div>
 
           <div class="pt-3 border-top border-secondary small text-muted">
-            Direction Générale & Administration • GESTION+
+            Direction Générale & Administration • GestADD
           </div>
         </div>
 
@@ -2790,7 +2790,7 @@
                 <div class="d-flex align-items-center gap-2 mb-2">
                   <img src="/images/corporate-logo.jpg" alt="Logo Corporate" class="pdf-company-logo">
                   <div>
-                    <h3 class="fw-bold mb-0 text-dark" style="font-size: 1.25rem;" id="pdfOrgTitle">GESTION+ ENTERPRISE</h3>
+                    <h3 class="fw-bold mb-0 text-dark" style="font-size: 1.25rem;" id="pdfOrgTitle">GestADD</h3>
                     <small class="text-muted">Système centralisé de gestion interne des demandes, stocks & décharges</small>
                   </div>
                 </div>
