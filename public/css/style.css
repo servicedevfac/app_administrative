@@ -2348,6 +2348,106 @@ input[type="submit"].is-submitting {
 }
 
 /* ==========================================================================
+   Pagination des listes et historiques
+   ========================================================================== */
+.app-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+  background: #fff;
+}
+
+.is-pagination-hidden {
+  display: none !important;
+}
+
+.app-pagination-summary {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.app-pagination-controls,
+.app-pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-pagination-nav,
+.app-pagination-page {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid #dbe3ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.app-pagination-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+}
+
+.app-pagination-page:hover,
+.app-pagination-nav:hover:not(:disabled) {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.app-pagination-page.is-active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.app-pagination-nav:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.app-pagination-ellipsis {
+  min-width: 20px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+@media (max-width: 575px) {
+  .app-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .app-pagination-summary {
+    text-align: center;
+  }
+
+  .app-pagination-controls {
+    justify-content: space-between;
+  }
+
+  .app-pagination-nav span {
+    display: none;
+  }
+
+  .app-pagination-nav {
+    padding: 0;
+  }
+}
+
+/* ==========================================================================
    Contrôle d'accès strict par Rôle (RBAC)
    ========================================================================== */
 body.role-collaborator .admin-only-feature {

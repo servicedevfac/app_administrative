@@ -128,6 +128,151 @@ function formatDateTime(value, fallback = '—') {
   return parsed.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+const COLLECTION_PAGINATION_CONFIG = [
+  { id: 'collaboratorRecentRequestsTableBody', pageSize: 6 },
+  { id: 'collabQuickCatalogList', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'categoriesLegendList', pageSize: 6, itemSelector: ':scope > li' },
+  { id: 'supervisorPendingRequestsTableBody', pageSize: 8 },
+  { id: 'supervisorCriticalStockList', pageSize: 4, itemSelector: ':scope > div' },
+  { id: 'assetsTableBody' },
+  { id: 'vehiclesTableBody' },
+  { id: 'expensesTableBody' },
+  { id: 'inventoriesTableBody' },
+  { id: 'savedReportsTableBody' },
+  { id: 'articlesStockTableBody' },
+  { id: 'selectableArticlesTableBody', pageSize: 8 },
+  { id: 'detailPreviewArticlesBody', pageSize: 5 },
+  { id: 'detailFullArticlesBody', pageSize: 8 },
+  { id: 'detailRequestHistory', pageSize: 6, itemSelector: ':scope > li' },
+  { id: 'detailRequestDocumentsList', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'documentsTableBody' },
+  { id: 'stockMovementsTableBody' },
+  { id: 'usersTableBody' },
+  { id: 'allRequestsTableBody' },
+  { id: 'delegationsTableBody' },
+  { id: 'refListDepartments', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'refListRequestCategories', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'refListStockCategories', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'refListUnits', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'refListLocations', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'refListSuppliers', pageSize: 5, itemSelector: ':scope > div' },
+  { id: 'activityLogsTableBody' },
+  { id: 'backupsTableBody' },
+  { id: 'myLoginHistoryTableBody', pageSize: 8 },
+  { id: 'replenishmentTableBody', pageSize: 8 },
+  { id: 'allLoginHistoryTableBody', pageSize: 8 }
+];
+
+const collectionPaginationState = new Map();
+
+function isPaginationPlaceholder(item) {
+  return item.matches('tr')
+    && item.children.length === 1
+    && Boolean(item.querySelector(':scope > td[colspan]'));
+}
+
+function paginationPages(currentPage, totalPages) {
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  return [...pages]
+    .filter(page => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right);
+}
+
+function paginationAnchor(container) {
+  if (container.matches('tbody')) {
+    return container.closest('.table-responsive') || container.closest('table');
+  }
+
+  return container;
+}
+
+function renderCollectionPagination(config, resetPage = false) {
+  const container = document.getElementById(config.id);
+  if (!container) return;
+
+  const selector = config.itemSelector || ':scope > tr';
+  const allItems = [...container.querySelectorAll(selector)];
+  const visibleItems = allItems.filter(item => item.style.display !== 'none' && !isPaginationPlaceholder(item));
+  const pageSize = config.pageSize || 10;
+  const totalPages = Math.max(1, Math.ceil(visibleItems.length / pageSize));
+  const state = collectionPaginationState.get(config.id) || { page: 1 };
+
+  state.page = resetPage ? 1 : Math.min(Math.max(1, state.page), totalPages);
+  collectionPaginationState.set(config.id, state);
+
+  allItems.forEach(item => item.classList.remove('is-pagination-hidden'));
+  const firstIndex = (state.page - 1) * pageSize;
+  visibleItems.forEach((item, index) => {
+    item.classList.toggle('is-pagination-hidden', index < firstIndex || index >= firstIndex + pageSize);
+  });
+
+  const hostId = `pagination-${config.id}`;
+  let host = document.getElementById(hostId);
+
+  if (visibleItems.length <= pageSize) {
+    host?.remove();
+    return;
+  }
+
+  if (!host) {
+    host = document.createElement('div');
+    host.id = hostId;
+    host.className = 'app-pagination';
+    paginationAnchor(container)?.insertAdjacentElement('afterend', host);
+  }
+
+  const lastIndex = Math.min(firstIndex + pageSize, visibleItems.length);
+  const pages = paginationPages(state.page, totalPages);
+  let previousPage = 0;
+  const pageButtons = pages.map(page => {
+    const separator = previousPage && page - previousPage > 1
+      ? '<span class="app-pagination-ellipsis" aria-hidden="true">…</span>'
+      : '';
+    previousPage = page;
+    return `${separator}<button type="button" class="app-pagination-page${page === state.page ? ' is-active' : ''}" data-page="${page}" aria-label="Aller à la page ${page}" ${page === state.page ? 'aria-current="page"' : ''}>${page}</button>`;
+  }).join('');
+
+  host.innerHTML = `
+    <span class="app-pagination-summary">${firstIndex + 1}–${lastIndex} sur ${visibleItems.length}</span>
+    <div class="app-pagination-controls" role="navigation" aria-label="Pagination">
+      <button type="button" class="app-pagination-nav" data-page="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''} aria-label="Page précédente"><i class="bi bi-chevron-left"></i><span>Précédent</span></button>
+      <div class="app-pagination-pages">${pageButtons}</div>
+      <button type="button" class="app-pagination-nav" data-page="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''} aria-label="Page suivante"><span>Suivant</span><i class="bi bi-chevron-right"></i></button>
+    </div>`;
+
+  host.querySelectorAll('button[data-page]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.page = Number(button.dataset.page);
+      renderCollectionPagination(config);
+    });
+  });
+}
+
+function setupCollectionPagination() {
+  COLLECTION_PAGINATION_CONFIG.forEach(config => {
+    const container = document.getElementById(config.id);
+    if (!container) return;
+
+    let scheduledFrame = null;
+    const observer = new MutationObserver(mutations => {
+      if (scheduledFrame) cancelAnimationFrame(scheduledFrame);
+      scheduledFrame = requestAnimationFrame(() => {
+        const shouldResetPage = mutations.some(mutation => mutation.type === 'childList' || mutation.attributeName === 'style');
+        renderCollectionPagination(config, shouldResetPage);
+        scheduledFrame = null;
+      });
+    });
+
+    observer.observe(container, {
+      childList: true,
+      attributes: true,
+      attributeFilter: ['style'],
+      subtree: false
+    });
+    renderCollectionPagination(config, true);
+  });
+}
+
 const writeActivity = {
   pending: 0,
   visibleSince: 0,
@@ -361,6 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupStepper();
   setupDetailTabs();
   setupTableFilters();
+  setupCollectionPagination();
   setupModalsAndActions();
   setupSearchGlobal();
   setupAuthAndSettingsHandlers();
@@ -4946,7 +5092,7 @@ const BackendApi = {
 
       const quickCatalog = document.getElementById('collabQuickCatalogList');
       if (quickCatalog) {
-        const availableArticles = articles.filter(a => a.quantity > 0).slice(0, 5);
+        const availableArticles = articles.filter(a => a.quantity > 0);
         quickCatalog.innerHTML = availableArticles.length
           ? availableArticles.map(art => `
             <div class="supply-quick-card">
@@ -4968,7 +5114,7 @@ const BackendApi = {
         const criticalArticles = articles.filter(a => a.quantity <= a.threshold);
         if (criticalBadge) criticalBadge.textContent = `${criticalArticles.length} alerte${criticalArticles.length > 1 ? 's' : ''}`;
         criticalList.innerHTML = criticalArticles.length
-          ? criticalArticles.slice(0, 4).map(art => `
+          ? criticalArticles.map(art => `
             <div class="p-2 rounded bg-light border d-flex align-items-center justify-content-between">
               <div>
                 <strong class="text-dark d-block" style="font-size: 0.85rem;">${escHtml(art.code)} — ${escHtml(art.name)}</strong>
@@ -5053,7 +5199,7 @@ const BackendApi = {
       const supTbody = document.getElementById('supervisorPendingRequestsTableBody');
       if (supTbody) {
         supTbody.innerHTML = pending.length
-          ? pending.slice(0, 8).map(r => `
+          ? pending.map(r => `
             <tr>
               <td class="request-reference text-primary font-monospace" title="${escHtml(r.reference)}">${escHtml(compactRequestReference(r.reference))}</td>
               <td><span class="fw-medium text-dark">${escHtml(r.user?.name || 'Collaborateur')}</span> <small class="text-muted">(${escHtml(r.service)})</small></td>
@@ -5074,7 +5220,7 @@ const BackendApi = {
           ? requests.filter(r => Number(r.user_id) === Number(AppState.currentUser.id))
           : requests;
         collabTbody.innerHTML = myReqs.length
-          ? myReqs.slice(0, 6).map(r => `
+          ? myReqs.map(r => `
             <tr>
               <td class="request-reference text-primary font-monospace" title="${escHtml(r.reference)}">${escHtml(compactRequestReference(r.reference))}</td>
               <td>${formatDateShort(r.created_at)}</td>
